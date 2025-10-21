@@ -1,6 +1,10 @@
 package tracer
 
-import "time"
+import (
+	"time"
+
+	"github.com/mfahmialkautsar/go-o11y/internal/fileutil"
+)
 
 const (
 	defaultTraceSampleRatio = 1.0
@@ -15,6 +19,7 @@ type Config struct {
 	ServiceName   string
 	SampleRatio   float64
 	ExportTimeout time.Duration
+	QueueDir      string
 }
 
 func (c Config) withDefaults() Config {
@@ -23,6 +28,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ExportTimeout <= 0 {
 		c.ExportTimeout = defaultExporterTimeout
+	}
+	if c.QueueDir == "" {
+		c.QueueDir = fileutil.DefaultQueueDir("traces")
 	}
 	return c
 }

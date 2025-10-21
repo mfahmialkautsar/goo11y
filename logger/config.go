@@ -3,6 +3,8 @@ package logger
 import (
 	"io"
 	"time"
+
+	"github.com/mfahmialkautsar/go-o11y/internal/fileutil"
 )
 
 const (
@@ -29,6 +31,7 @@ type LokiConfig struct {
 	Password string
 	Timeout  time.Duration
 	Labels   map[string]string
+	QueueDir string
 }
 
 func (c Config) withDefaults() Config {
@@ -43,6 +46,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Loki.Timeout == 0 {
 		c.Loki.Timeout = defaultLokiTimeout
+	}
+	if c.Loki.QueueDir == "" {
+		c.Loki.QueueDir = fileutil.DefaultQueueDir("logs")
 	}
 	return c
 }

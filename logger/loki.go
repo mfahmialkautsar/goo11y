@@ -1,25 +1,26 @@
 package logger
 
 import (
-	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/mfahmialkautsar/go-o11y/internal/spool"
 )
 
 type lokiWriter struct {
-	url      string
-	username string
-	password string
+	endpoint string
 	labels   map[string]string
-	timeout  time.Duration
-	client   *http.Client
+	headers  map[string][]string
+	queue    *spool.Queue
 }
 
-func newLokiWriter(cfg LokiConfig, serviceName string) io.Writer {
+func newLokiWriter(cfg LokiConfig, serviceName string) (io.Writer, error) {
 	labels := make(map[string]string, len(cfg.Labels)+1)
 	for k, v := range cfg.Labels {
 		labels[k] = v
@@ -30,57 +31,74 @@ func newLokiWriter(cfg LokiConfig, serviceName string) io.Writer {
 		labels["service_name"] = "unknown"
 	}
 
+	trimmed := strings.TrimRight(cfg.URL, "/")
+	if trimmed == "" {
+		return nil, fmt.Errorf("loki: url is required")
+	}
+	endpoint := trimmed
+	if !strings.HasSuffix(trimmed, "/otlp/v1/logs") {
+		endpoint = trimmed + "/otlp/v1/logs"
+	}
+
+	queue, err := spool.New(cfg.QueueDir)
+	if err != nil {
+		return nil, err
+	}
+
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = defaultLokiTimeout
 	}
 
-	return &lokiWriter{
-		url:      cfg.URL,
-		username: cfg.Username,
-		password: cfg.Password,
-		labels:   labels,
-		timeout:  timeout,
-		client: &http.Client{
-			Timeout: timeout,
-		},
+	transport := cloneDefaultTransport()
+	client := &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
 	}
+
+	queue.Start(context.Background(), spool.HTTPHandler(client))
+
+	headers := map[string][]string{
+		"Content-Type": {"application/json"},
+	}
+	if cfg.Username != "" && cfg.Password != "" {
+		headers["Authorization"] = []string{basicAuthHeader(cfg.Username, cfg.Password)}
+	}
+
+	return &lokiWriter{
+		endpoint: endpoint,
+		labels:   labels,
+		headers:  headers,
+		queue:    queue,
+	}, nil
 }
 
 func (lw *lokiWriter) Write(p []byte) (int, error) {
-	if lw == nil || lw.url == "" {
+	if lw == nil {
 		return len(p), nil
 	}
+	body, err := lw.buildPayload(p)
+	if err != nil {
+		return 0, err
+	}
 
-	entry := append([]byte(nil), p...)
-	go lw.send(entry)
+	req := &spool.HTTPRequest{
+		Method: http.MethodPost,
+		URL:    lw.endpoint,
+		Header: copyHeaders(lw.headers),
+		Body:   body,
+	}
+
+	payload, err := req.Marshal()
+	if err != nil {
+		return 0, err
+	}
+
+	if _, err := lw.queue.Enqueue(payload); err != nil {
+		return 0, err
+	}
+	lw.queue.Notify()
 	return len(p), nil
-}
-
-func (lw *lokiWriter) send(payload []byte) {
-	ctx, cancel := context.WithTimeout(context.Background(), lw.timeout)
-	defer cancel()
-
-	body, err := lw.buildPayload(payload)
-	if err != nil {
-		return
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, lw.url, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if lw.username != "" && lw.password != "" {
-		req.SetBasicAuth(lw.username, lw.password)
-	}
-
-	resp, err := lw.client.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
 }
 
 func (lw *lokiWriter) buildPayload(entry []byte) ([]byte, error) {
@@ -104,4 +122,26 @@ func (lw *lokiWriter) buildPayload(entry []byte) ([]byte, error) {
 	}
 
 	return json.Marshal(payload)
+}
+
+func basicAuthHeader(username, password string) string {
+	credentials := username + ":" + password
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(credentials))
+}
+
+func copyHeaders(src map[string][]string) map[string][]string {
+	dup := make(map[string][]string, len(src))
+	for key, values := range src {
+		vv := make([]string, len(values))
+		copy(vv, values)
+		dup[key] = vv
+	}
+	return dup
+}
+
+func cloneDefaultTransport() http.RoundTripper {
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		return base.Clone()
+	}
+	return http.DefaultTransport
 }

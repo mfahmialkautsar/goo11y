@@ -137,7 +137,7 @@ func (t *Telemetry) emitWarn(ctx context.Context, msg string, err error) {
 	if err == nil {
 		return
 	}
-	t.Logger.Warn(ctx, msg, "error", err)
+	t.Logger.WithContext(ctx).Warn(msg, "error", err)
 }
 
 func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) {

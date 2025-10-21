@@ -1,6 +1,10 @@
 package meter
 
-import "time"
+import (
+	"time"
+
+	"github.com/mfahmialkautsar/go-o11y/internal/fileutil"
+)
 
 const defaultExportInterval = 10 * time.Second
 
@@ -11,6 +15,7 @@ type Config struct {
 	Insecure       bool
 	ServiceName    string
 	ExportInterval time.Duration
+	QueueDir       string
 	Runtime        RuntimeConfig
 }
 
@@ -22,6 +27,9 @@ type RuntimeConfig struct {
 func (c Config) withDefaults() Config {
 	if c.ExportInterval <= 0 {
 		c.ExportInterval = defaultExportInterval
+	}
+	if c.QueueDir == "" {
+		c.QueueDir = fileutil.DefaultQueueDir("metrics")
 	}
 	return c
 }

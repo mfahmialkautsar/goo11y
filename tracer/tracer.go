@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mfahmialkautsar/go-o11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -35,6 +36,13 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	if cfg.Insecure {
 		opts = append(opts, otlptracehttp.WithInsecure())
 	}
+
+	client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("create trace client: %w", err)
+	}
+	opts = append(opts, otlptracehttp.WithHTTPClient(client))
+	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false}))
 
 	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {

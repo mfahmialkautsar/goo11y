@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mfahmialkautsar/go-o11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
@@ -35,6 +36,13 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	if cfg.Insecure {
 		opts = append(opts, otlpmetrichttp.WithInsecure())
 	}
+
+	client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportInterval)
+	if err != nil {
+		return nil, fmt.Errorf("create metric client: %w", err)
+	}
+	opts = append(opts, otlpmetrichttp.WithHTTPClient(client))
+	opts = append(opts, otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: false}))
 
 	exporter, err := otlpmetrichttp.New(ctx, opts...)
 	if err != nil {
