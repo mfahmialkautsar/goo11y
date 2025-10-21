@@ -1,72 +1,105 @@
 package logger
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"io"
-	"log"
-	"net/http"
 	"os"
 	"strings"
-	"time"
+	"sync/atomic"
 
-	"github.com/mfahmialkautsar/go-o11y/config"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/pkgerrors"
-	"go.opentelemetry.io/otel/trace"
 )
 
+const (
+	traceIDField = "trace_id"
+	spanIDField  = "span_id"
+)
+
+// Logger defines the logging surface backed by zerolog with optional trace propagation.
 type Logger interface {
 	Debug(ctx context.Context, msg string, fields ...any)
 	Info(ctx context.Context, msg string, fields ...any)
 	Warn(ctx context.Context, msg string, fields ...any)
 	Error(ctx context.Context, err error, msg string, fields ...any)
 	Fatal(ctx context.Context, err error, msg string, fields ...any)
+	SetTraceProvider(provider TraceProvider)
+}
+
+// TraceContext represents trace metadata injected into structured logs.
+type TraceContext struct {
+	TraceID string
+	SpanID  string
+}
+
+// TraceProvider supplies trace context for a given request context.
+type TraceProvider interface {
+	Current(ctx context.Context) (TraceContext, bool)
+}
+
+// TraceProviderFunc adapter to allow use of ordinary functions as trace providers.
+type TraceProviderFunc func(context.Context) (TraceContext, bool)
+
+// Current invokes f(ctx).
+func (f TraceProviderFunc) Current(ctx context.Context) (TraceContext, bool) {
+	return f(ctx)
 }
 
 type zerologLogger struct {
-	logger      zerolog.Logger
-	lokiWriter  *lokiWriter
-	multiWriter io.Writer
+	logger        zerolog.Logger
+	traceProvider atomic.Value // TraceProvider
 }
 
-func NewWithConfig(cfg config.Logger) Logger {
+// New constructs a Zerolog-backed logger based on the provided configuration.
+func New(cfg Config) Logger {
+	cfg = cfg.withDefaults()
+	if !cfg.Enabled {
+		return nil
+	}
+
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 
-	if cfg.Environment != "production" {
-		consoleWriter := zerolog.ConsoleWriter{
+	writers := make([]io.Writer, 0, len(cfg.Writers)+2)
+	writers = append(writers, cfg.Writers...)
+	if cfg.Console {
+		writers = append(writers, zerolog.ConsoleWriter{
 			Out:        os.Stdout,
-			TimeFormat: time.RFC3339Nano,
-		}
-		cfg.Writers = append(cfg.Writers, consoleWriter)
+			TimeFormat: defaultConsoleTimeFormat,
+		})
+	}
+	if cfg.Loki.URL != "" {
+		writers = append(writers, newLokiWriter(cfg.Loki, cfg.ServiceName))
+	}
+	if len(writers) == 0 {
+		writers = append(writers, os.Stdout)
 	}
 
-	var loki *lokiWriter
-	if cfg.LokiURL != "" {
-		loki = newLokiWriter(cfg.LokiURL, cfg.ServiceName, cfg.LokiUser, cfg.LokiPass)
-		cfg.Writers = append(cfg.Writers, loki)
-	}
+	multiWriter := io.MultiWriter(writers...)
 
-	multiWriter := io.MultiWriter(cfg.Writers...)
-
-	zlog := zerolog.New(multiWriter).With().
+	base := zerolog.New(multiWriter).
+		With().
 		Timestamp().
+		Str("service_name", cfg.ServiceName).
 		Logger()
 
-	zlevel, err := zerolog.ParseLevel(strings.ToLower(cfg.Level))
+	level, err := zerolog.ParseLevel(strings.ToLower(cfg.Level))
 	if err != nil {
-		zlevel = zerolog.InfoLevel
+		level = zerolog.InfoLevel
 	}
-	zlog = zlog.Level(zlevel)
+	base = base.Level(level)
 
-	return &zerologLogger{
-		logger:      zlog,
-		lokiWriter:  loki,
-		multiWriter: multiWriter,
+	l := &zerologLogger{
+		logger: base,
 	}
+	l.traceProvider.Store(TraceProvider(nil))
+
+	return l
+}
+
+// SetTraceProvider configures trace metadata injection for subsequent log events.
+func (l *zerologLogger) SetTraceProvider(provider TraceProvider) {
+	l.traceProvider.Store(provider)
 }
 
 func (l *zerologLogger) Debug(ctx context.Context, msg string, fields ...any) {
@@ -98,119 +131,47 @@ func (l *zerologLogger) Fatal(ctx context.Context, err error, msg string, fields
 }
 
 func (l *zerologLogger) log(ctx context.Context, event *zerolog.Event, msg string, fields ...any) {
-	for i := 0; i < len(fields); i += 2 {
-		if i+1 < len(fields) {
-			key, ok := fields[i].(string)
-			if !ok {
-				continue
-			}
-			if err, isErr := fields[i+1].(error); isErr {
-				event = event.Stack().Err(err)
-				continue
-			}
-			event = event.Interface(key, fields[i+1])
-		}
-	}
-
-	if ctx != nil {
-		span := trace.SpanFromContext(ctx)
-		if span.SpanContext().IsValid() {
-			traceID := span.SpanContext().TraceID().String()
-			spanID := span.SpanContext().SpanID().String()
-			event = event.
-				Str("trace_id", traceID).
-				Str("span_id", spanID)
-		}
-	}
-
+	l.applyTrace(ctx, event)
+	applyFields(event, fields)
 	event.Msg(msg)
 }
 
-type lokiWriter struct {
-	url         string
-	serviceName string
-	username    string
-	password    string
-	client      *http.Client
-}
-
-type lokiPayload struct {
-	Streams []lokiStream `json:"streams"`
-}
-
-type lokiStream struct {
-	Stream map[string]string `json:"stream"`
-	Values [][]string        `json:"values"`
-}
-
-func newLokiWriter(url, serviceName, username, password string) *lokiWriter {
-	return &lokiWriter{
-		url:         url,
-		serviceName: serviceName,
-		username:    username,
-		password:    password,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+func (l *zerologLogger) applyTrace(ctx context.Context, event *zerolog.Event) {
+	if ctx == nil {
+		return
+	}
+	value := l.traceProvider.Load()
+	if value == nil {
+		return
+	}
+	provider, _ := value.(TraceProvider)
+	if provider == nil {
+		return
+	}
+	traceCtx, ok := provider.Current(ctx)
+	if !ok {
+		return
+	}
+	if traceCtx.TraceID != "" {
+		event.Str(traceIDField, traceCtx.TraceID)
+	}
+	if traceCtx.SpanID != "" {
+		event.Str(spanIDField, traceCtx.SpanID)
 	}
 }
 
-func (lw *lokiWriter) Write(p []byte) (n int, err error) {
-	go lw.send(p)
-	return len(p), nil
-}
-
-func (lw *lokiWriter) send(logEntry []byte) {
-	timestamp := time.Now().UnixNano()
-
-	var entryMap map[string]any
-	if err := json.Unmarshal(logEntry, &entryMap); err == nil {
-		if tsVal, ok := entryMap["time"].(string); ok {
-			if parsed, err := time.Parse(time.RFC3339Nano, tsVal); err == nil {
-				timestamp = parsed.UnixNano()
-			}
+func applyFields(event *zerolog.Event, fields []any) {
+	for i := 0; i+1 < len(fields); i += 2 {
+		key, ok := fields[i].(string)
+		if !ok {
+			continue
+		}
+		value := fields[i+1]
+		switch v := value.(type) {
+		case error:
+			event.Stack().Err(v)
+		default:
+			event.Interface(key, v)
 		}
 	}
-
-	payload := lokiPayload{
-		Streams: []lokiStream{
-			{
-				Stream: map[string]string{
-					"service_name": lw.serviceName,
-				},
-				Values: [][]string{
-					{fmt.Sprintf("%d", timestamp), string(logEntry)},
-				},
-			},
-		},
-	}
-
-	jsonPayload, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, lw.url, bytes.NewReader(jsonPayload))
-	if err != nil {
-		return
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	if lw.username != "" && lw.password != "" {
-		req.SetBasicAuth(lw.username, lw.password)
-	}
-
-	resp, err := lw.client.Do(req)
-	if err != nil {
-		return
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			log.Printf("lokiWriter: failed to close response body: %v\n", cerr)
-		}
-	}()
 }

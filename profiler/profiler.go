@@ -7,30 +7,30 @@ import (
 	"github.com/grafana/pyroscope-go"
 )
 
-type Config struct {
-	ServerURL   string
-	ServiceName string
-	Enabled     bool
-}
-
-type Profiler struct {
+// Controller manages the lifecycle of the Pyroscope profiler.
+type Controller struct {
 	profiler *pyroscope.Profiler
 }
 
-func Setup(cfg Config) (*Profiler, error) {
+// Setup starts the profiler according to the provided configuration.
+func Setup(cfg Config) (*Controller, error) {
+	cfg = cfg.withDefaults()
 	if !cfg.Enabled {
-		return &Profiler{}, nil
+		return &Controller{}, nil
 	}
 
-	profiler, err := pyroscope.Start(pyroscope.Config{
+	if cfg.ServerURL == "" {
+		return nil, fmt.Errorf("profiler server_url is required")
+	}
+	if cfg.ServiceName == "" {
+		return nil, fmt.Errorf("profiler service_name is required")
+	}
+
+	controller, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName: cfg.ServiceName,
 		ServerAddress:   cfg.ServerURL,
 		Logger:          nil,
-		Tags: map[string]string{
-			"service":     cfg.ServiceName,
-			"environment": "docker-compose",
-			"namespace":   "microservices",
-		},
+		Tags:            cfg.Tags,
 		ProfileTypes: []pyroscope.ProfileType{
 			pyroscope.ProfileCPU,
 			pyroscope.ProfileAllocObjects,
@@ -45,18 +45,19 @@ func Setup(cfg Config) (*Profiler, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to start profiler: %w", err)
+		return nil, fmt.Errorf("start profiler: %w", err)
 	}
 
-	runtime.SetMutexProfileFraction(5)
-	runtime.SetBlockProfileRate(5)
+	runtime.SetMutexProfileFraction(cfg.MutexProfileFraction)
+	runtime.SetBlockProfileRate(cfg.BlockProfileRate)
 
-	return &Profiler{profiler: profiler}, nil
+	return &Controller{profiler: controller}, nil
 }
 
-func (p *Profiler) Stop() error {
-	if p.profiler != nil {
-		return p.profiler.Stop()
+// Stop flushes and terminates the profiler if it has been started.
+func (c *Controller) Stop() error {
+	if c == nil || c.profiler == nil {
+		return nil
 	}
-	return nil
+	return c.profiler.Stop()
 }

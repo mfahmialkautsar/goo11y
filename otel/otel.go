@@ -2,153 +2,116 @@ package otel
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"runtime"
-	"time"
 
-	"go.opentelemetry.io/otel"
+	"github.com/mfahmialkautsar/go-o11y/meter"
+	"github.com/mfahmialkautsar/go-o11y/tracer"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 )
 
+// Config retains the legacy combined configuration surface for backward compatibility.
 type Config struct {
-	ServiceName string
-	Endpoint    string
-	Enabled     bool
+	Tracer   tracer.Config
+	Meter    meter.Config
+	Resource Resource
 }
 
+// Resource mirrors goo11y.ResourceConfig to avoid an import cycle.
+type Resource struct {
+	ServiceName      string
+	ServiceVersion   string
+	ServiceNamespace string
+	Environment      string
+	Attributes       map[string]string
+}
+
+// Providers exposes the allocated tracer and meter providers.
 type Providers struct {
-	TracerProvider *sdktrace.TracerProvider
-	MeterProvider  *sdkmetric.MeterProvider
-	Meter          metric.Meter
+	Tracer *tracer.Provider
+	Meter  *meter.Provider
 }
 
+// Setup constructs tracer and meter providers using the modular packages introduced by the refactor.
 func Setup(ctx context.Context, cfg Config) (*Providers, error) {
-	if !cfg.Enabled {
-		return &Providers{}, nil
-	}
-
-	res, err := resource.New(
-		ctx,
-		resource.WithAttributes(
-			semconv.ServiceName(cfg.ServiceName),
-			semconv.ServiceVersion("1.0.0"),
-			attribute.String("service.namespace", "microservices"),
-		),
-		resource.WithHost(),
-		resource.WithProcess(),
-		resource.WithOS(),
-		resource.WithContainer(),
-		resource.WithFromEnv(),
-	)
+	res, err := buildResource(ctx, cfg.Resource)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create resource: %w", err)
+		return nil, fmt.Errorf("prepare resource: %w", err)
 	}
 
-	traceExp, err := otlptracehttp.New(
-		ctx,
-		otlptracehttp.WithEndpoint(cfg.Endpoint),
-		otlptracehttp.WithInsecure(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
+	providers := &Providers{}
+
+	if cfg.Tracer.Enabled {
+		tp, err := tracer.Setup(ctx, cfg.Tracer, res)
+		if err != nil {
+			return nil, fmt.Errorf("setup tracer: %w", err)
+		}
+		providers.Tracer = tp
 	}
 
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(traceExp),
-		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-	)
-
-	metricExp, err := otlpmetrichttp.New(
-		ctx,
-		otlpmetrichttp.WithEndpoint(cfg.Endpoint),
-		otlpmetrichttp.WithInsecure(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create metric exporter: %w", err)
+	if cfg.Meter.Enabled {
+		mp, err := meter.Setup(ctx, cfg.Meter, res)
+		if err != nil {
+			return nil, fmt.Errorf("setup meter: %w", err)
+		}
+		providers.Meter = mp
 	}
 
-	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(
-			sdkmetric.NewPeriodicReader(
-				metricExp,
-				sdkmetric.WithInterval(10*time.Second),
-			),
-		),
-		sdkmetric.WithResource(res),
-	)
-
-	otel.SetTracerProvider(tp)
-	otel.SetMeterProvider(mp)
-	otel.SetTextMapPropagator(
-		propagation.NewCompositeTextMapPropagator(
-			propagation.TraceContext{},
-			propagation.Baggage{},
-		),
-	)
-
-	meter := mp.Meter(cfg.ServiceName)
-
-	return &Providers{
-		TracerProvider: tp,
-		MeterProvider:  mp,
-		Meter:          meter,
-	}, nil
+	return providers, nil
 }
 
+// RegisterRuntimeMetrics maintains the historical helper by enabling runtime metrics on the meter provider.
 func (p *Providers) RegisterRuntimeMetrics(ctx context.Context) error {
-	if p.Meter == nil {
+	if p == nil || p.Meter == nil {
 		return nil
 	}
-
-	_, err := p.Meter.Int64ObservableGauge(
-		"runtime.go.goroutines",
-		metric.WithDescription("Number of goroutines"),
-		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(runtime.NumGoroutine()))
-			return nil
-		}),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create goroutines gauge: %w", err)
-	}
-
-	_, err = p.Meter.Int64ObservableGauge(
-		"runtime.go.memory.heap_alloc",
-		metric.WithDescription("Bytes of allocated heap objects"),
-		metric.WithUnit("By"),
-		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			var m runtime.MemStats
-			runtime.ReadMemStats(&m)
-			o.Observe(int64(m.HeapAlloc))
-			return nil
-		}),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create heap_alloc gauge: %w", err)
-	}
-
-	return nil
+	return p.Meter.RegisterRuntimeMetrics(ctx, meter.RuntimeConfig{Enabled: true})
 }
 
+// Shutdown flushes the configured providers.
 func (p *Providers) Shutdown(ctx context.Context) error {
-	if p.TracerProvider != nil {
-		if err := p.TracerProvider.Shutdown(ctx); err != nil {
-			return err
-		}
+	if p == nil {
+		return nil
 	}
-	if p.MeterProvider != nil {
-		if err := p.MeterProvider.Shutdown(ctx); err != nil {
-			return err
-		}
+	var combined error
+	if p.Meter != nil {
+		combined = errors.Join(combined, p.Meter.Shutdown(ctx))
 	}
-	return nil
+	if p.Tracer != nil {
+		combined = errors.Join(combined, p.Tracer.Shutdown(ctx))
+	}
+	return combined
+}
+
+func buildResource(ctx context.Context, cfg Resource) (*resource.Resource, error) {
+	attrs := []attribute.KeyValue{}
+	if cfg.ServiceName != "" {
+		attrs = append(attrs, semconv.ServiceNameKey.String(cfg.ServiceName))
+	}
+	if cfg.ServiceVersion != "" {
+		attrs = append(attrs, semconv.ServiceVersionKey.String(cfg.ServiceVersion))
+	}
+	if cfg.ServiceNamespace != "" {
+		attrs = append(attrs, semconv.ServiceNamespaceKey.String(cfg.ServiceNamespace))
+	}
+	if cfg.Environment != "" {
+		attrs = append(attrs, semconv.DeploymentEnvironmentNameKey.String(cfg.Environment))
+	}
+	for k, v := range cfg.Attributes {
+		attrs = append(attrs, attribute.String(k, v))
+	}
+
+	return resource.New(
+		ctx,
+		resource.WithSchemaURL(semconv.SchemaURL),
+		resource.WithAttributes(attrs...),
+		resource.WithFromEnv(),
+		resource.WithTelemetrySDK(),
+		resource.WithProcess(),
+		resource.WithOS(),
+		resource.WithHost(),
+		resource.WithContainer(),
+	)
 }
