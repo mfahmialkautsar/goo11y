@@ -19,7 +19,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 
-	testintegration "github.com/mfahmialkautsar/go-o11y/internal/testutil/integration"
+	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
 func TestMimirMetricsIntegration(t *testing.T) {

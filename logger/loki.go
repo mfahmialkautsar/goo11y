@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mfahmialkautsar/go-o11y/internal/spool"
+	"github.com/mfahmialkautsar/goo11y/internal/spool"
 )
 
 type lokiWriter struct {

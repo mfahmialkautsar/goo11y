@@ -1,4 +1,4 @@
-module github.com/mfahmialkautsar/go-o11y
+module github.com/mfahmialkautsar/goo11y
 
 go 1.25
 

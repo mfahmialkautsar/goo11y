@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mfahmialkautsar/go-o11y/internal/spool"
+	"github.com/mfahmialkautsar/goo11y/internal/spool"
 )
 
 func NewClient(queueDir string, timeout time.Duration) (*http.Client, error) {

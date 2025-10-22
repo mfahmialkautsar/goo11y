@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mfahmialkautsar/go-o11y/internal/persistenthttp"
+	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"

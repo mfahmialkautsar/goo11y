@@ -3,10 +3,10 @@ package goo11y
 import (
 	"errors"
 
-	"github.com/mfahmialkautsar/go-o11y/logger"
-	"github.com/mfahmialkautsar/go-o11y/meter"
-	"github.com/mfahmialkautsar/go-o11y/profiler"
-	"github.com/mfahmialkautsar/go-o11y/tracer"
+	"github.com/mfahmialkautsar/goo11y/logger"
+	"github.com/mfahmialkautsar/goo11y/meter"
+	"github.com/mfahmialkautsar/goo11y/profiler"
+	"github.com/mfahmialkautsar/goo11y/tracer"
 )
 
 const (

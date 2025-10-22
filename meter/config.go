@@ -3,7 +3,7 @@ package meter
 import (
 	"time"
 
-	"github.com/mfahmialkautsar/go-o11y/internal/fileutil"
+	"github.com/mfahmialkautsar/goo11y/internal/fileutil"
 )
 
 const defaultExportInterval = 10 * time.Second

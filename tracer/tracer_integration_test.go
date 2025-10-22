@@ -19,7 +19,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 	"go.opentelemetry.io/otel/trace"
 
-	testintegration "github.com/mfahmialkautsar/go-o11y/internal/testutil/integration"
+	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
 func TestTempoTracingIntegration(t *testing.T) {

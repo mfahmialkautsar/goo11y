@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	testintegration "github.com/mfahmialkautsar/go-o11y/internal/testutil/integration"
+	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
 func TestLokiLoggingIntegration(t *testing.T) {
