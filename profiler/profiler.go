@@ -31,6 +31,7 @@ func Setup(cfg Config) (*Controller, error) {
 		ServerAddress:   cfg.ServerURL,
 		Logger:          nil,
 		Tags:            cfg.Tags,
+		TenantID:        cfg.TenantID,
 		ProfileTypes: []pyroscope.ProfileType{
 			pyroscope.ProfileCPU,
 			pyroscope.ProfileAllocObjects,

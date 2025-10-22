@@ -57,6 +57,53 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 	}
 }
 
+func TestLoggerIndependenceWithoutContext(t *testing.T) {
+	var standalone bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "standalone-logger",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{&standalone},
+	}
+
+	log := New(cfg)
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	log.SetTraceProvider(nil)
+	log.Info("independent")
+
+	entry := decodeLogLine(t, standalone.Bytes())
+	if _, ok := entry[traceIDField]; ok {
+		t.Fatalf("unexpected trace_id without context: %v", entry[traceIDField])
+	}
+	if _, ok := entry[spanIDField]; ok {
+		t.Fatalf("unexpected span_id without context: %v", entry[spanIDField])
+	}
+
+	var nilCtx bytes.Buffer
+	cfg.Writers = []io.Writer{&nilCtx}
+	withProvider := New(cfg)
+	if withProvider == nil {
+		t.Fatal("expected logger instance with provider")
+	}
+
+	withProvider.SetTraceProvider(TraceProviderFunc(func(context.Context) (TraceContext, bool) {
+		return TraceContext{TraceID: "trace", SpanID: "span"}, true
+	}))
+
+	withProvider.WithContext(nil).Info("nil-context")
+	ctxEntry := decodeLogLine(t, nilCtx.Bytes())
+	if _, ok := ctxEntry[traceIDField]; ok {
+		t.Fatalf("unexpected trace_id with nil context: %v", ctxEntry[traceIDField])
+	}
+	if _, ok := ctxEntry[spanIDField]; ok {
+		t.Fatalf("unexpected span_id with nil context: %v", ctxEntry[spanIDField])
+	}
+}
+
 func decodeLogLine(t *testing.T, line []byte) map[string]any {
 	t.Helper()
 	trimmed := bytes.TrimSpace(line)

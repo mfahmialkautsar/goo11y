@@ -11,6 +11,7 @@ type Config struct {
 	ServerURL            string
 	ServiceName          string
 	Tags                 map[string]string
+	TenantID             string
 	MutexProfileFraction int
 	BlockProfileRate     int
 }
@@ -19,8 +20,16 @@ func (c Config) withDefaults() Config {
 	if c.Tags == nil {
 		c.Tags = make(map[string]string)
 	}
-	if _, ok := c.Tags["service"]; !ok && c.ServiceName != "" {
-		c.Tags["service"] = c.ServiceName
+	if c.ServiceName != "" {
+		if _, ok := c.Tags["service"]; !ok {
+			c.Tags["service"] = c.ServiceName
+		}
+		if _, ok := c.Tags["service_name"]; !ok {
+			c.Tags["service_name"] = c.ServiceName
+		}
+	}
+	if c.TenantID == "" {
+		c.TenantID = "anonymous"
 	}
 	if c.MutexProfileFraction <= 0 {
 		c.MutexProfileFraction = defaultMutexProfileFraction

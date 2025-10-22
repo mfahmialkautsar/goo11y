@@ -36,8 +36,8 @@ func newLokiWriter(cfg LokiConfig, serviceName string) (io.Writer, error) {
 		return nil, fmt.Errorf("loki: url is required")
 	}
 	endpoint := trimmed
-	if !strings.HasSuffix(trimmed, "/otlp/v1/logs") {
-		endpoint = trimmed + "/otlp/v1/logs"
+	if !strings.HasSuffix(trimmed, "/loki/api/v1/push") {
+		endpoint = trimmed + "/loki/api/v1/push"
 	}
 
 	queue, err := spool.New(cfg.QueueDir)

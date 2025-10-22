@@ -160,7 +160,6 @@ func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) 
 
 	return resource.New(
 		ctx,
-		resource.WithSchemaURL(semconv.SchemaURL),
 		resource.WithAttributes(attrs...),
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
