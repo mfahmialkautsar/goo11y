@@ -1,6 +1,6 @@
 module github.com/mfahmialkautsar/goo11y
 
-go 1.25
+go 1.23.0
 
 require (
 	github.com/grafana/pyroscope-go v1.2.7
