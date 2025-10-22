@@ -3,6 +3,7 @@ package meter
 import (
 	"time"
 
+	"github.com/mfahmialkautsar/goo11y/auth"
 	"github.com/mfahmialkautsar/goo11y/internal/fileutil"
 )
 
@@ -17,6 +18,7 @@ type Config struct {
 	ExportInterval time.Duration
 	QueueDir       string
 	Runtime        RuntimeConfig
+	Credentials    auth.Credentials
 }
 
 // RuntimeConfig controls optional runtime metric instrumentation.
@@ -30,6 +32,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.QueueDir == "" {
 		c.QueueDir = fileutil.DefaultQueueDir("metrics")
+	}
+	if c.Credentials.IsZero() {
+		c.Credentials = auth.FromEnv("METER")
 	}
 	return c
 }

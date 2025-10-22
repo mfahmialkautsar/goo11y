@@ -2,7 +2,6 @@ package logger
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,8 +60,13 @@ func newLokiWriter(cfg LokiConfig, serviceName string) (io.Writer, error) {
 	headers := map[string][]string{
 		"Content-Type": {"application/json"},
 	}
-	if cfg.Username != "" && cfg.Password != "" {
-		headers["Authorization"] = []string{basicAuthHeader(cfg.Username, cfg.Password)}
+	if creds := cfg.Credentials.HeaderMap(); len(creds) > 0 {
+		for key, value := range creds {
+			if key == "" || value == "" {
+				continue
+			}
+			headers[key] = []string{value}
+		}
 	}
 
 	return &lokiWriter{
@@ -122,11 +126,6 @@ func (lw *lokiWriter) buildPayload(entry []byte) ([]byte, error) {
 	}
 
 	return json.Marshal(payload)
-}
-
-func basicAuthHeader(username, password string) string {
-	credentials := username + ":" + password
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(credentials))
 }
 
 func copyHeaders(src map[string][]string) map[string][]string {

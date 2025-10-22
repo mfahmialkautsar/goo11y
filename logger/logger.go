@@ -111,9 +111,6 @@ func New(cfg Config) Logger {
 
 // WithContext binds a context to the logger for subsequent trace extraction.
 func (l *zerologLogger) WithContext(ctx context.Context) Logger {
-	if l == nil {
-		return nil
-	}
 	clone := l.clone()
 	clone.ctx = ctx
 	return clone
@@ -121,9 +118,6 @@ func (l *zerologLogger) WithContext(ctx context.Context) Logger {
 
 // With attaches static fields to every log emission from the returned logger.
 func (l *zerologLogger) With(fields ...any) Logger {
-	if l == nil {
-		return nil
-	}
 	if len(fields) == 0 {
 		return l
 	}
@@ -134,33 +128,21 @@ func (l *zerologLogger) With(fields ...any) Logger {
 
 // Debug emits a debug-level message.
 func (l *zerologLogger) Debug(msg string, fields ...any) {
-	if l == nil {
-		return
-	}
 	l.emit(l.core.base.Debug().Caller(1), msg, fields)
 }
 
 // Info emits an info-level message.
 func (l *zerologLogger) Info(msg string, fields ...any) {
-	if l == nil {
-		return
-	}
 	l.emit(l.core.base.Info().Caller(1), msg, fields)
 }
 
 // Warn emits a warning-level message.
 func (l *zerologLogger) Warn(msg string, fields ...any) {
-	if l == nil {
-		return
-	}
 	l.emit(l.core.base.Warn().Caller(1), msg, fields)
 }
 
 // Error emits an error-level message capturing the supplied error stack if present.
 func (l *zerologLogger) Error(err error, msg string, fields ...any) {
-	if l == nil {
-		return
-	}
 	event := l.core.base.Error().Caller(1)
 	if err != nil {
 		event = event.Stack().Err(err)
@@ -170,9 +152,6 @@ func (l *zerologLogger) Error(err error, msg string, fields ...any) {
 
 // Fatal logs the error and terminates execution via zerolog's fatal semantics.
 func (l *zerologLogger) Fatal(err error, msg string, fields ...any) {
-	if l == nil {
-		return
-	}
 	event := l.core.base.Fatal().Caller(1)
 	if err != nil {
 		event = event.Stack().Err(err)
@@ -182,7 +161,7 @@ func (l *zerologLogger) Fatal(err error, msg string, fields ...any) {
 
 // SetTraceProvider configures trace metadata injection for subsequent log events.
 func (l *zerologLogger) SetTraceProvider(provider TraceProvider) {
-	if l == nil || l.core == nil {
+	if l.core == nil {
 		return
 	}
 	if provider == nil {
@@ -206,7 +185,7 @@ func (l *zerologLogger) emit(event *zerolog.Event, msg string, fields []any) {
 }
 
 func (l *zerologLogger) applyTrace(event *zerolog.Event) {
-	if l == nil || l.core == nil || event == nil {
+	if l.core == nil || event == nil {
 		return
 	}
 	ctx := l.ctx

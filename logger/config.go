@@ -4,6 +4,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/mfahmialkautsar/goo11y/auth"
 	"github.com/mfahmialkautsar/goo11y/internal/fileutil"
 )
 
@@ -26,12 +27,11 @@ type Config struct {
 
 // LokiConfig captures Grafana Loki specific settings.
 type LokiConfig struct {
-	URL      string
-	Username string
-	Password string
-	Timeout  time.Duration
-	Labels   map[string]string
-	QueueDir string
+	URL         string
+	Timeout     time.Duration
+	Labels      map[string]string
+	QueueDir    string
+	Credentials auth.Credentials
 }
 
 func (c Config) withDefaults() Config {
@@ -49,6 +49,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Loki.QueueDir == "" {
 		c.Loki.QueueDir = fileutil.DefaultQueueDir("logs")
+	}
+	if c.Loki.Credentials.IsZero() {
+		c.Loki.Credentials = auth.FromEnv("LOGGER")
 	}
 	return c
 }

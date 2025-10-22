@@ -36,6 +36,9 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	if cfg.Insecure {
 		opts = append(opts, otlpmetrichttp.WithInsecure())
 	}
+	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
+		opts = append(opts, otlpmetrichttp.WithHeaders(headers))
+	}
 
 	client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportInterval)
 	if err != nil {

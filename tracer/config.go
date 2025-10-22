@@ -3,6 +3,7 @@ package tracer
 import (
 	"time"
 
+	"github.com/mfahmialkautsar/goo11y/auth"
 	"github.com/mfahmialkautsar/goo11y/internal/fileutil"
 )
 
@@ -20,6 +21,7 @@ type Config struct {
 	SampleRatio   float64
 	ExportTimeout time.Duration
 	QueueDir      string
+	Credentials   auth.Credentials
 }
 
 func (c Config) withDefaults() Config {
@@ -31,6 +33,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.QueueDir == "" {
 		c.QueueDir = fileutil.DefaultQueueDir("traces")
+	}
+	if c.Credentials.IsZero() {
+		c.Credentials = auth.FromEnv("TRACER")
 	}
 	return c
 }

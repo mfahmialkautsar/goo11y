@@ -1,5 +1,7 @@
 package profiler
 
+import "github.com/mfahmialkautsar/goo11y/auth"
+
 const (
 	defaultMutexProfileFraction = 5
 	defaultBlockProfileRate     = 5
@@ -14,6 +16,7 @@ type Config struct {
 	TenantID             string
 	MutexProfileFraction int
 	BlockProfileRate     int
+	Credentials          auth.Credentials
 }
 
 func (c Config) withDefaults() Config {
@@ -36,6 +39,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.BlockProfileRate <= 0 {
 		c.BlockProfileRate = defaultBlockProfileRate
+	}
+	if c.Credentials.IsZero() {
+		c.Credentials = auth.FromEnv("PROFILER")
 	}
 	return c
 }

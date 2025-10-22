@@ -26,7 +26,15 @@ func Setup(cfg Config) (*Controller, error) {
 		return nil, fmt.Errorf("profiler service_name is required")
 	}
 
-	controller, err := pyroscope.Start(pyroscope.Config{
+	headers := cfg.Credentials.HeaderMap()
+	user, pass, hasBasic := cfg.Credentials.BasicAuth()
+	if hasBasic {
+		if headers != nil {
+			delete(headers, "Authorization")
+		}
+	}
+
+	profilerCfg := pyroscope.Config{
 		ApplicationName: cfg.ServiceName,
 		ServerAddress:   cfg.ServerURL,
 		Logger:          nil,
@@ -44,7 +52,20 @@ func Setup(cfg Config) (*Controller, error) {
 			pyroscope.ProfileBlockCount,
 			pyroscope.ProfileBlockDuration,
 		},
-	})
+		HTTPHeaders: headers,
+	}
+
+	if hasBasic {
+		profilerCfg.BasicAuthUser = user
+		profilerCfg.BasicAuthPassword = pass
+	} else if token, ok := cfg.Credentials.Bearer(); ok {
+		if profilerCfg.HTTPHeaders == nil {
+			profilerCfg.HTTPHeaders = make(map[string]string)
+		}
+		profilerCfg.HTTPHeaders["Authorization"] = "Bearer " + token
+	}
+
+	controller, err := pyroscope.Start(profilerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("start profiler: %w", err)
 	}

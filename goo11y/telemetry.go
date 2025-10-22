@@ -158,8 +158,7 @@ func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) 
 		attrs = append(attrs, attribute.String(key, value))
 	}
 
-	return resource.New(
-		ctx,
+	options := []resource.Option{
 		resource.WithAttributes(attrs...),
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
@@ -167,5 +166,50 @@ func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) 
 		resource.WithProcess(),
 		resource.WithHost(),
 		resource.WithContainer(),
-	)
+	}
+	if len(cfg.Resource.Detectors) > 0 {
+		options = append(options, resource.WithDetectors(cfg.Resource.Detectors...))
+	}
+	if len(cfg.Resource.Options) > 0 {
+		options = append(options, cfg.Resource.Options...)
+	}
+
+	defaults, err := resource.New(ctx, options...)
+	if err != nil {
+		return nil, fmt.Errorf("resource defaults: %w", err)
+	}
+
+	base := resource.Empty()
+	if cfg.Resource.Override != nil {
+		base, err = cfg.Resource.Override(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("resource override: %w", err)
+		}
+		if base == nil {
+			base = resource.Empty()
+		}
+	}
+
+	res, err := resource.Merge(defaults, base)
+	if err != nil {
+		return nil, fmt.Errorf("resource merge override: %w", err)
+	}
+	if res == nil {
+		res = resource.Empty()
+	}
+
+	for idx, customizer := range cfg.Customizers {
+		if customizer == nil {
+			continue
+		}
+		res, err = customizer.Customize(ctx, res)
+		if err != nil {
+			return nil, fmt.Errorf("resource customizer %d: %w", idx, err)
+		}
+		if res == nil {
+			res = resource.Empty()
+		}
+	}
+
+	return res, nil
 }
