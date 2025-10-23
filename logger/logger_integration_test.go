@@ -17,11 +17,11 @@ import (
 	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
-func TestLokiLoggingIntegration(t *testing.T) {
+func TestOTLPLoggingIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ingestURL := testintegration.EnvOrDefault("O11Y_TEST_LOGS_INGEST_URL", "http://localhost:3100/loki/api/v1/push")
+	ingestURL := testintegration.EnvOrDefault("O11Y_TEST_LOGS_INGEST_URL", "http://localhost:3100/otlp/v1/logs")
 	queryBase := testintegration.EnvOrDefault("O11Y_TEST_LOKI_QUERY_URL", "http://localhost:3100")
 	if err := testintegration.CheckReachable(ctx, queryBase); err != nil {
 		t.Skipf("skipping: loki unreachable at %s: %v", queryBase, err)
@@ -37,8 +37,8 @@ func TestLokiLoggingIntegration(t *testing.T) {
 		Environment: "test",
 		ServiceName: serviceName,
 		Console:     false,
-		Loki: LokiConfig{
-			URL:      ingestURL,
+		OTLP: OTLPConfig{
+			Endpoint: ingestURL,
 			QueueDir: queueDir,
 		},
 	}

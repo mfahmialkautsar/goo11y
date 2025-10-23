@@ -28,7 +28,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	logsIngestURL := integration.EnvOrDefault("O11Y_TEST_LOGS_INGEST_URL", "http://localhost:3100/loki/api/v1/push")
+	logsIngestURL := integration.EnvOrDefault("O11Y_TEST_LOGS_INGEST_URL", "http://localhost:3100/otlp/v1/logs")
 	lokiQueryBase := integration.EnvOrDefault("O11Y_TEST_LOKI_QUERY_URL", "http://localhost:3100")
 	meterEndpoint := integration.EnvOrDefault("O11Y_TEST_METRICS_OTLP_ENDPOINT", "localhost:4318")
 	mimirQueryBase := integration.EnvOrDefault("O11Y_TEST_MIMIR_QUERY_URL", "http://localhost:9009")
@@ -64,8 +64,8 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 			Level:       "info",
 			Console:     false,
 			ServiceName: serviceName,
-			Loki: logger.LokiConfig{
-				URL:      logsIngestURL,
+			OTLP: logger.OTLPConfig{
+				Endpoint: logsIngestURL,
 				QueueDir: loggerQueueDir,
 			},
 		},

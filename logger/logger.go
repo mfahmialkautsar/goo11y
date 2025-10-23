@@ -80,9 +80,9 @@ func New(cfg Config) Logger {
 			TimeFormat: defaultConsoleTimeFormat,
 		})
 	}
-	if cfg.Loki.URL != "" {
-		if lokiWriter, err := newLokiWriter(cfg.Loki, cfg.ServiceName); err == nil {
-			writers = append(writers, lokiWriter)
+	if cfg.OTLP.Endpoint != "" {
+		if otlpWriter, err := newOTLPWriter(cfg.OTLP, cfg.ServiceName, cfg.Environment); err == nil {
+			writers = append(writers, otlpWriter)
 		}
 	}
 	if len(writers) == 0 {
