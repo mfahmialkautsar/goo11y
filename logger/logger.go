@@ -73,8 +73,15 @@ func New(cfg Config) (Logger, error) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 
-	writers := make([]io.Writer, 0, len(cfg.Writers)+2)
+	writers := make([]io.Writer, 0, len(cfg.Writers)+3)
 	writers = append(writers, cfg.Writers...)
+	if cfg.File.Enabled {
+		fileWriter, err := newDailyFileWriter(cfg.File)
+		if err != nil {
+			return nil, fmt.Errorf("setup file writer: %w", err)
+		}
+		writers = append(writers, fileWriter)
+	}
 	if cfg.Console {
 		writers = append(writers, zerolog.ConsoleWriter{
 			Out:        os.Stdout,

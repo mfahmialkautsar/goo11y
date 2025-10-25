@@ -3,12 +3,16 @@
 package goo11y
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -46,6 +50,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	}
 
 	loggerQueueDir := t.TempDir()
+	loggerFileDir := t.TempDir()
 	meterQueueDir := t.TempDir()
 	traceQueueDir := t.TempDir()
 
@@ -64,6 +69,11 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 			Level:       "info",
 			Console:     false,
 			ServiceName: serviceName,
+			File: logger.FileConfig{
+				Enabled:   true,
+				Directory: loggerFileDir,
+				Buffer:    8,
+			},
 			OTLP: logger.OTLPConfig{
 				Endpoint: logsIngestURL,
 				QueueDir: loggerQueueDir,
@@ -107,6 +117,18 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		t.Fatal("expected logger to be initialised")
 	}
 	tele.Logger.WithContext(spanCtx).Info(logMessage, "test_case", testCase)
+
+	filePath := filepath.Join(loggerFileDir, time.Now().Format("2006-01-02")+".log")
+	fileEntry := waitForTelemetryFileEntry(t, filePath, logMessage)
+	if got := fmt.Sprint(fileEntry["trace_id"]); got != traceID {
+		t.Fatalf("unexpected file trace_id: %v", got)
+	}
+	if got := fmt.Sprint(fileEntry["span_id"]); got != spanID {
+		t.Fatalf("unexpected file span_id: %v", got)
+	}
+	if got := fmt.Sprint(fileEntry["test_case"]); got != testCase {
+		t.Fatalf("unexpected file test_case: %v", got)
+	}
 
 	m := otel.Meter("goo11y/integration")
 	counter, err := m.Int64Counter(metricName)
@@ -300,4 +322,36 @@ func normalizeLokiBase(raw string) string {
 	trimmed = strings.TrimSuffix(trimmed, "/otlp/v1/logs")
 	trimmed = strings.TrimSuffix(trimmed, "/loki/api/v1/push")
 	return strings.TrimRight(trimmed, "/")
+}
+
+func waitForTelemetryFileEntry(t *testing.T, path, expectedMessage string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := bytes.TrimSpace(lines[i])
+			if len(line) == 0 {
+				continue
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(line, &payload); err != nil {
+				t.Fatalf("json.Unmarshal: %v", err)
+			}
+			if fmt.Sprint(payload["message"]) == expectedMessage {
+				return payload
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("log message %q not found in %s", expectedMessage, path)
+	return nil
 }

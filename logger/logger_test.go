@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoggerInjectsTraceMetadata(t *testing.T) {
@@ -62,6 +65,45 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 	plain := decodeLogLine(t, second.Bytes())
 	if _, ok := plain[traceIDField]; ok {
 		t.Fatalf("unexpected trace metadata in logger without context")
+	}
+}
+
+func TestFileLoggerWritesDailyFile(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "file-logger",
+		Environment: "production",
+		Console:     false,
+		File: FileConfig{
+			Enabled:   true,
+			Directory: dir,
+			Buffer:    4,
+		},
+	}
+
+	log, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	message := fmt.Sprintf("file-log-%d", time.Now().UnixNano())
+	log.Info(message, "component", "logger")
+
+	expectedPath := filepath.Join(dir, time.Now().Format("2006-01-02")+".log")
+	entry := waitForFileEntry(t, expectedPath, message)
+
+	if got := entry["service_name"]; got != "file-logger" {
+		t.Fatalf("unexpected service_name: %v", got)
+	}
+	if got := entry["message"]; got != message {
+		t.Fatalf("unexpected message: %v", got)
+	}
+	if got := entry["component"]; got != "logger" {
+		t.Fatalf("missing field component: %v", got)
 	}
 }
 
@@ -161,4 +203,36 @@ func TestNewFailsWhenQueueDirUnavailable(t *testing.T) {
 	if log != nil {
 		t.Fatal("expected logger construction to fail")
 	}
+}
+
+func waitForFileEntry(t *testing.T, path, expectedMessage string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := bytes.TrimSpace(lines[i])
+			if len(line) == 0 {
+				continue
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(line, &payload); err != nil {
+				t.Fatalf("json.Unmarshal: %v", err)
+			}
+			if payload["message"] == expectedMessage {
+				return payload
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("log message %q not found in %s", expectedMessage, path)
+	return nil
 }

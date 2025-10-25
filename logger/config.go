@@ -22,6 +22,7 @@ type Config struct {
 	Console     bool
 	Writers     []io.Writer
 	OTLP        OTLPConfig
+	File        FileConfig
 }
 
 // OTLPConfig captures OTLP/HTTP settings for log export.
@@ -31,6 +32,13 @@ type OTLPConfig struct {
 	Headers  map[string]string
 	Timeout  time.Duration
 	QueueDir string
+}
+
+// FileConfig controls optional file-based logging.
+type FileConfig struct {
+	Enabled   bool
+	Directory string
+	Buffer    int
 }
 
 func (c Config) withDefaults() Config {
@@ -48,6 +56,14 @@ func (c Config) withDefaults() Config {
 	}
 	if c.OTLP.QueueDir == "" {
 		c.OTLP.QueueDir = fileutil.DefaultQueueDir("logs")
+	}
+	if c.File.Enabled {
+		if c.File.Directory == "" {
+			c.File.Directory = fileutil.DefaultQueueDir("file-logs")
+		}
+		if c.File.Buffer <= 0 {
+			c.File.Buffer = 1024
+		}
 	}
 	return c
 }
