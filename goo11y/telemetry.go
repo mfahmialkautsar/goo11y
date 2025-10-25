@@ -46,7 +46,11 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 	tele := &Telemetry{}
 
 	if cfg.Logger.Enabled {
-		tele.Logger = logger.New(cfg.Logger)
+		log, err := logger.New(cfg.Logger)
+		if err != nil {
+			return nil, fmt.Errorf("setup logger: %w", err)
+		}
+		tele.Logger = log
 	}
 
 	if cfg.Tracer.Enabled {

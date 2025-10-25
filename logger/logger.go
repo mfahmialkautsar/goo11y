@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -63,10 +64,10 @@ var noopTraceProvider = TraceProviderFunc(func(context.Context) (TraceContext, b
 })
 
 // New constructs a Zerolog-backed logger based on the provided configuration.
-func New(cfg Config) Logger {
+func New(cfg Config) (Logger, error) {
 	cfg = cfg.withDefaults()
 	if !cfg.Enabled {
-		return nil
+		return nil, nil
 	}
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
@@ -81,9 +82,11 @@ func New(cfg Config) Logger {
 		})
 	}
 	if cfg.OTLP.Endpoint != "" {
-		if otlpWriter, err := newOTLPWriter(cfg.OTLP, cfg.ServiceName, cfg.Environment); err == nil {
-			writers = append(writers, otlpWriter)
+		otlpWriter, err := newOTLPWriter(cfg.OTLP, cfg.ServiceName, cfg.Environment)
+		if err != nil {
+			return nil, fmt.Errorf("setup otlp writer: %w", err)
 		}
+		writers = append(writers, otlpWriter)
 	}
 	if len(writers) == 0 {
 		writers = append(writers, os.Stdout)
@@ -106,7 +109,7 @@ func New(cfg Config) Logger {
 	core := &loggerCore{base: base}
 	core.traceProvider.Store(noopTraceProvider)
 
-	return &zerologLogger{core: core}
+	return &zerologLogger{core: core}, nil
 }
 
 // WithContext binds a context to the logger for subsequent trace extraction.

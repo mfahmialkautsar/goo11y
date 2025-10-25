@@ -43,7 +43,10 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 		},
 	}
 
-	log := New(cfg)
+	log, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	if log == nil {
 		t.Fatal("expected logger instance")
 	}
@@ -63,7 +66,7 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 	values.Set("limit", "100")
 
 	queryURL := queryHost + "/loki/api/v1/query_range?" + values.Encode()
-	err := testintegration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (bool, error) {
+	err = testintegration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (bool, error) {
 		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, queryURL, nil)
 		if err != nil {
 			return false, err

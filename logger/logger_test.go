@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -18,7 +20,10 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 		Writers:     []io.Writer{&buf},
 	}
 
-	log := New(cfg)
+	log, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	if log == nil {
 		t.Fatal("expected logger instance")
 	}
@@ -46,7 +51,10 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 
 	var second bytes.Buffer
 	cfg.Writers = []io.Writer{&second}
-	logNoCtx := New(cfg)
+	logNoCtx, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	logNoCtx.SetTraceProvider(TraceProviderFunc(func(context.Context) (TraceContext, bool) {
 		return TraceContext{TraceID: "zzz", SpanID: "yyy"}, true
 	}))
@@ -67,7 +75,10 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 		Writers:     []io.Writer{&standalone},
 	}
 
-	log := New(cfg)
+	log, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	if log == nil {
 		t.Fatal("expected logger instance")
 	}
@@ -85,7 +96,10 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 
 	var nilCtx bytes.Buffer
 	cfg.Writers = []io.Writer{&nilCtx}
-	withProvider := New(cfg)
+	withProvider, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	if withProvider == nil {
 		t.Fatal("expected logger instance with provider")
 	}
@@ -94,7 +108,11 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 		return TraceContext{TraceID: "trace", SpanID: "span"}, true
 	}))
 
-	withProvider.WithContext(nil).Info("nil-context")
+	loggerWithCtx := withProvider.WithContext(context.Background())
+	if zl, ok := loggerWithCtx.(*zerologLogger); ok {
+		zl.ctx = nil
+	}
+	loggerWithCtx.Info("nil-context")
 	ctxEntry := decodeLogLine(t, nilCtx.Bytes())
 	if _, ok := ctxEntry[traceIDField]; ok {
 		t.Fatalf("unexpected trace_id with nil context: %v", ctxEntry[traceIDField])
@@ -115,4 +133,32 @@ func decodeLogLine(t *testing.T, line []byte) map[string]any {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 	return payload
+}
+
+func TestNewFailsWhenQueueDirUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "queue")
+	if err := os.WriteFile(blocked, []byte("locked"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "test",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{io.Discard},
+		OTLP: OTLPConfig{
+			Endpoint: "http://localhost:4318",
+			QueueDir: blocked,
+		},
+	}
+
+	log, err := New(cfg)
+	if err == nil {
+		t.Fatal("expected OTLP setup error")
+	}
+	if log != nil {
+		t.Fatal("expected logger construction to fail")
+	}
 }

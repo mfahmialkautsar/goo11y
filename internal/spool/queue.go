@@ -37,11 +37,33 @@ func New(dir string) (*Queue, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("spool: queue dir is required")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+
+	cleaned := filepath.Clean(dir)
+	if !filepath.IsAbs(cleaned) {
+		if abs, err := filepath.Abs(cleaned); err == nil {
+			cleaned = abs
+		}
+	}
+
+	if err := os.MkdirAll(cleaned, 0o755); err != nil {
 		return nil, fmt.Errorf("spool: create dir: %w", err)
 	}
+
+	probe, err := os.CreateTemp(cleaned, ".spool-probe-*")
+	if err != nil {
+		return nil, fmt.Errorf("spool: probe write: %w", err)
+	}
+	probeName := probe.Name()
+	if cerr := probe.Close(); cerr != nil {
+		_ = os.Remove(probeName)
+		return nil, fmt.Errorf("spool: probe close: %w", cerr)
+	}
+	if err := os.Remove(probeName); err != nil {
+		return nil, fmt.Errorf("spool: probe cleanup: %w", err)
+	}
+
 	return &Queue{
-		dir:    dir,
+		dir:    cleaned,
 		notify: make(chan struct{}, notifierBuffer),
 	}, nil
 }
