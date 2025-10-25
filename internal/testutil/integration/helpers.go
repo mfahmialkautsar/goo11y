@@ -6,19 +6,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
 const defaultPollInterval = 100 * time.Millisecond
-
-// EnvOrDefault returns the value of key or fallback if the key is unset.
-func EnvOrDefault(key, fallback string) string {
-	if value := os.Getenv(key); strings.TrimSpace(value) != "" {
-		return value
-	}
-	return fallback
-}
 
 // WaitUntil polls fn until it returns true or the context is done.
 func WaitUntil(ctx context.Context, interval time.Duration, fn func(context.Context) (bool, error)) error {

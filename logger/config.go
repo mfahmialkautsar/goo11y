@@ -62,9 +62,6 @@ func (c Config) withDefaults() Config {
 	if c.OTLP.QueueDir == "" {
 		c.OTLP.QueueDir = fileutil.DefaultQueueDir("logs")
 	}
-	if c.OTLP.Credentials.IsZero() {
-		c.OTLP.Credentials = auth.FromEnv("LOGGER")
-	}
 	if c.File.Enabled {
 		if c.File.Directory == "" {
 			c.File.Directory = fileutil.DefaultQueueDir("file-logs")

@@ -45,15 +45,21 @@ func (c Config) withDefaults() Config {
 	if c.BlockProfileRate <= 0 {
 		c.BlockProfileRate = defaultBlockProfileRate
 	}
-	if c.Credentials.IsZero() {
-		c.Credentials = auth.FromEnv("PROFILER")
-	}
 	return c
 }
 
 // ApplyDefaults returns a copy of the config with default values populated.
 func (c Config) ApplyDefaults() Config {
 	return c.withDefaults()
+}
+
+func (c Config) preparedCredentials() (map[string]string, string, string, bool) {
+	headers := c.Credentials.HeaderMap()
+	user, pass, hasBasic := c.Credentials.BasicAuth()
+	if hasBasic && headers != nil {
+		delete(headers, "Authorization")
+	}
+	return headers, user, pass, hasBasic
 }
 
 // Validate ensures the profiler configuration is complete when profiling is enabled.

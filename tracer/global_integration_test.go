@@ -23,8 +23,9 @@ func TestGlobalTempoTracingIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	otlpEndpoint := testintegration.EnvOrDefault("O11Y_TEST_TRACES_OTLP_ENDPOINT", "localhost:4318")
-	tempoBase := testintegration.EnvOrDefault("O11Y_TEST_TEMPO_QUERY_URL", "http://localhost:3200")
+	targets := testintegration.DefaultTargets()
+	otlpEndpoint := targets.TracesEndpoint
+	tempoBase := targets.TempoQueryURL
 	if err := testintegration.CheckReachable(ctx, tempoBase); err != nil {
 		t.Skipf("skipping: tempo unreachable at %s: %v", tempoBase, err)
 	}
@@ -32,7 +33,6 @@ func TestGlobalTempoTracingIntegration(t *testing.T) {
 	queueDir := t.TempDir()
 	serviceName := fmt.Sprintf("goo11y-it-global-tracer-%d", time.Now().UnixNano())
 	labelValue := fmt.Sprintf("global-traces-%d", time.Now().UnixNano())
-
 	res, err := resource.New(ctx,
 		resource.WithAttributes(semconv.ServiceNameKey.String(serviceName)),
 	)

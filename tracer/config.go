@@ -36,9 +36,6 @@ func (c Config) withDefaults() Config {
 	if c.QueueDir == "" {
 		c.QueueDir = fileutil.DefaultQueueDir("traces")
 	}
-	if c.Credentials.IsZero() {
-		c.Credentials = auth.FromEnv("TRACER")
-	}
 	return c
 }
 

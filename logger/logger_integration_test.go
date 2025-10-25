@@ -53,8 +53,9 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ingestURL := testintegration.EnvOrDefault("O11Y_TEST_LOGS_INGEST_URL", "http://localhost:3100/otlp/v1/logs")
-	queryBase := testintegration.EnvOrDefault("O11Y_TEST_LOKI_QUERY_URL", "http://localhost:3100")
+	endpoints := testintegration.DefaultTargets()
+	ingestURL := endpoints.LogsIngestURL
+	queryBase := endpoints.LokiQueryURL
 	if err := testintegration.CheckReachable(ctx, queryBase); err != nil {
 		t.Skipf("skipping: loki unreachable at %s: %v", queryBase, err)
 	}

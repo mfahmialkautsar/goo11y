@@ -22,13 +22,7 @@ func Setup(cfg Config) (*Controller, error) {
 		return &Controller{}, nil
 	}
 
-	headers := cfg.Credentials.HeaderMap()
-	user, pass, hasBasic := cfg.Credentials.BasicAuth()
-	if hasBasic {
-		if headers != nil {
-			delete(headers, "Authorization")
-		}
-	}
+	headers, user, pass, hasBasic := cfg.preparedCredentials()
 
 	profilerCfg := pyroscope.Config{
 		ApplicationName: cfg.ServiceName,
@@ -54,11 +48,6 @@ func Setup(cfg Config) (*Controller, error) {
 	if hasBasic {
 		profilerCfg.BasicAuthUser = user
 		profilerCfg.BasicAuthPassword = pass
-	} else if token, ok := cfg.Credentials.Bearer(); ok {
-		if profilerCfg.HTTPHeaders == nil {
-			profilerCfg.HTTPHeaders = make(map[string]string)
-		}
-		profilerCfg.HTTPHeaders["Authorization"] = "Bearer " + token
 	}
 
 	controller, err := pyroscope.Start(profilerCfg)

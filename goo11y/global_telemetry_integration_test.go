@@ -22,12 +22,13 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	logsIngestURL := integration.EnvOrDefault("O11Y_TEST_LOGS_INGEST_URL", "http://localhost:3100/otlp/v1/logs")
-	lokiQueryBase := integration.EnvOrDefault("O11Y_TEST_LOKI_QUERY_URL", "http://localhost:3100")
-	meterEndpoint := integration.EnvOrDefault("O11Y_TEST_METRICS_OTLP_ENDPOINT", "localhost:4318")
-	mimirQueryBase := integration.EnvOrDefault("O11Y_TEST_MIMIR_QUERY_URL", "http://localhost:9009")
-	traceEndpoint := integration.EnvOrDefault("O11Y_TEST_TRACES_OTLP_ENDPOINT", "localhost:4318")
-	tempoQueryBase := integration.EnvOrDefault("O11Y_TEST_TEMPO_QUERY_URL", "http://localhost:3200")
+	endpoints := integration.DefaultTargets()
+	logsIngestURL := endpoints.LogsIngestURL
+	lokiQueryBase := endpoints.LokiQueryURL
+	meterEndpoint := endpoints.MetricsEndpoint
+	mimirQueryBase := endpoints.MimirQueryURL
+	traceEndpoint := endpoints.TracesEndpoint
+	tempoQueryBase := endpoints.TempoQueryURL
 
 	for base, name := range map[string]string{
 		lokiQueryBase:  "loki",

@@ -21,8 +21,9 @@ func TestMimirMetricsIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	otlpEndpoint := testintegration.EnvOrDefault("O11Y_TEST_METRICS_OTLP_ENDPOINT", "localhost:4318")
-	mimirBase := testintegration.EnvOrDefault("O11Y_TEST_MIMIR_QUERY_URL", "http://localhost:9009")
+	targets := testintegration.DefaultTargets()
+	otlpEndpoint := targets.MetricsEndpoint
+	mimirBase := targets.MimirQueryURL
 	if err := testintegration.CheckReachable(ctx, mimirBase); err != nil {
 		t.Skipf("skipping: mimir unreachable at %s: %v", mimirBase, err)
 	}

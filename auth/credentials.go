@@ -2,7 +2,6 @@ package auth
 
 import (
 	"encoding/base64"
-	"os"
 	"strings"
 )
 
@@ -90,41 +89,4 @@ func (c Credentials) extraHeaders() map[string]string {
 		headers[key] = value
 	}
 	return headers
-}
-
-// FromEnv hydrates credential fields using the provided prefix.
-// Supported variables: <prefix>_USERNAME, <prefix>_PASSWORD,
-// <prefix>_BEARER_TOKEN, <prefix>_API_KEY, <prefix>_API_KEY_HEADER, <prefix>_HEADERS.
-// The HEADERS value accepts comma-separated key=value pairs.
-func FromEnv(prefix string) Credentials {
-	lookup := func(suffix string) string {
-		return strings.TrimSpace(os.Getenv(prefix + "_" + suffix))
-	}
-
-	creds := Credentials{
-		BasicUsername: lookup("USERNAME"),
-		BasicPassword: lookup("PASSWORD"),
-		BearerToken:   lookup("BEARER_TOKEN"),
-		APIKey:        lookup("API_KEY"),
-		APIKeyHeader:  lookup("API_KEY_HEADER"),
-	}
-
-	if raw := lookup("HEADERS"); raw != "" {
-		pairs := strings.Split(raw, ",")
-		creds.Headers = make(map[string]string, len(pairs))
-		for _, pair := range pairs {
-			parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			if key == "" || value == "" {
-				continue
-			}
-			creds.Headers[key] = value
-		}
-	}
-
-	return creds
 }

@@ -18,8 +18,9 @@ func TestGlobalPyroscopeProfilingIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	pyroscopeBase := testintegration.EnvOrDefault("O11Y_TEST_PYROSCOPE_URL", "http://localhost:4040")
-	tenantID := testintegration.EnvOrDefault("O11Y_TEST_PYROSCOPE_TENANT", "anonymous")
+	targets := testintegration.DefaultTargets()
+	pyroscopeBase := targets.PyroscopeURL
+	tenantID := targets.PyroscopeTenant
 	if err := testintegration.CheckReachable(ctx, pyroscopeBase); err != nil {
 		t.Skipf("skipping: pyroscope unreachable at %s: %v", pyroscopeBase, err)
 	}
