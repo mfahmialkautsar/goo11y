@@ -33,7 +33,7 @@ func TestMimirMetricsIntegration(t *testing.T) {
 	}
 
 	queueDir := t.TempDir()
-	serviceName := fmt.Sprintf("go-o11y-it-meter-%d", time.Now().UnixNano())
+	serviceName := fmt.Sprintf("goo11y-it-meter-%d", time.Now().UnixNano())
 	metricName := "go_o11y_integration_metric_total"
 	labelValue := fmt.Sprintf("metrics-%d", time.Now().UnixNano())
 
@@ -59,7 +59,7 @@ func TestMimirMetricsIntegration(t *testing.T) {
 	}
 	defer provider.Shutdown(context.Background())
 
-	m := otel.Meter("go-o11y/integration")
+	m := otel.Meter("goo11y/integration")
 	counter, err := m.Int64Counter(metricName)
 	if err != nil {
 		t.Fatalf("create counter: %v", err)

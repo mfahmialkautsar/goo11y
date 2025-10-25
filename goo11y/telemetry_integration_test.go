@@ -49,7 +49,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	meterQueueDir := t.TempDir()
 	traceQueueDir := t.TempDir()
 
-	serviceName := fmt.Sprintf("go-o11y-it-telemetry-%d", time.Now().UnixNano())
+	serviceName := fmt.Sprintf("goo11y-it-telemetry-%d", time.Now().UnixNano())
 	metricName := fmt.Sprintf("go_o11y_trace_metric_total_%d", time.Now().UnixNano())
 	testCase := fmt.Sprintf("telemetry-trace-%d", time.Now().UnixNano())
 	logMessage := fmt.Sprintf("telemetry-log-%d", time.Now().UnixNano())
@@ -97,7 +97,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		}
 	})
 
-	otelTracer := otel.Tracer("go-o11y/integration")
+	otelTracer := otel.Tracer("goo11y/integration")
 	spanCtx, span := otelTracer.Start(ctx, "telemetry-integration-span", trace.WithAttributes(attribute.String("test_case", testCase)))
 	traceID := span.SpanContext().TraceID().String()
 	spanID := span.SpanContext().SpanID().String()
@@ -108,7 +108,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	}
 	tele.Logger.WithContext(spanCtx).Info(logMessage, "test_case", testCase)
 
-	m := otel.Meter("go-o11y/integration")
+	m := otel.Meter("goo11y/integration")
 	counter, err := m.Int64Counter(metricName)
 	if err != nil {
 		t.Fatalf("create counter: %v", err)

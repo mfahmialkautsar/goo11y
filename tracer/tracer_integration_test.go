@@ -33,7 +33,7 @@ func TestTempoTracingIntegration(t *testing.T) {
 	}
 
 	queueDir := t.TempDir()
-	serviceName := fmt.Sprintf("go-o11y-it-tracer-%d", time.Now().UnixNano())
+	serviceName := fmt.Sprintf("goo11y-it-tracer-%d", time.Now().UnixNano())
 	labelValue := fmt.Sprintf("traces-%d", time.Now().UnixNano())
 
 	res, err := resource.New(ctx,
@@ -59,7 +59,7 @@ func TestTempoTracingIntegration(t *testing.T) {
 	}
 	defer provider.Shutdown(context.Background())
 
-	tracer := otel.Tracer("go-o11y/integration")
+	tracer := otel.Tracer("goo11y/integration")
 	spanCtx, span := tracer.Start(ctx, "integration-span", trace.WithAttributes(attribute.String("test_case", labelValue)))
 	traceID := span.SpanContext().TraceID().String()
 

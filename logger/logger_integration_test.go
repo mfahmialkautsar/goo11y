@@ -28,7 +28,7 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 	}
 
 	queueDir := t.TempDir()
-	serviceName := fmt.Sprintf("go-o11y-it-logger-%d", time.Now().UnixNano())
+	serviceName := fmt.Sprintf("goo11y-it-logger-%d", time.Now().UnixNano())
 	message := fmt.Sprintf("integration-log-%d", time.Now().UnixNano())
 
 	cfg := Config{

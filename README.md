@@ -21,4 +21,4 @@ requestLogger := tele.Logger.WithContext(ctx).With("component", "api")
 requestLogger.Info("processing request")
 ```
 
-Metrics and traces are emitted automatically once configured. Any payload that fails to reach the backend is persisted to the user's cache directory under `go-o11y/<signal>` and retried with exponential backoff until accepted.
+Metrics and traces are emitted automatically once configured. Any payload that fails to reach the backend is persisted to the user's cache directory under `goo11y/<signal>` and retried with exponential backoff until accepted.

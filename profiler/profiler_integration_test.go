@@ -29,7 +29,7 @@ func TestPyroscopeProfilingIntegration(t *testing.T) {
 		t.Skipf("skipping: pyroscope unreachable at %s: %v", pyroscopeBase, err)
 	}
 
-	serviceName := fmt.Sprintf("go-o11y-it-profiler-%d.cpu", time.Now().UnixNano())
+	serviceName := fmt.Sprintf("goo11y-it-profiler-%d.cpu", time.Now().UnixNano())
 	labelValue := fmt.Sprintf("profile-%d", time.Now().UnixNano())
 	t.Logf("using service %s label %s", serviceName, labelValue)
 

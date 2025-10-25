@@ -10,5 +10,5 @@ func DefaultQueueDir(component string) string {
 	if err != nil || base == "" {
 		base = os.TempDir()
 	}
-	return filepath.Join(base, "go-o11y", component)
+	return filepath.Join(base, "goo11y", component)
 }
