@@ -19,6 +19,7 @@ type Config struct {
 	QueueDir       string
 	Runtime        RuntimeConfig
 	Credentials    auth.Credentials
+	UseGlobal      bool
 }
 
 // RuntimeConfig controls optional runtime metric instrumentation.

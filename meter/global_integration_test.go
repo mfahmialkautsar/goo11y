@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -17,7 +16,10 @@ import (
 	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
-func TestMimirMetricsIntegration(t *testing.T) {
+func TestGlobalMimirMetricsIntegration(t *testing.T) {
+	Use(nil)
+	t.Cleanup(func() { Use(nil) })
+
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
@@ -28,9 +30,9 @@ func TestMimirMetricsIntegration(t *testing.T) {
 	}
 
 	queueDir := t.TempDir()
-	serviceName := fmt.Sprintf("goo11y-it-meter-%d", time.Now().UnixNano())
-	metricName := "go_o11y_integration_metric_total"
-	labelValue := fmt.Sprintf("metrics-%d", time.Now().UnixNano())
+	serviceName := fmt.Sprintf("goo11y-it-global-meter-%d", time.Now().UnixNano())
+	metricName := "go_o11y_global_metric_total"
+	labelValue := fmt.Sprintf("global-metrics-%d", time.Now().UnixNano())
 
 	res, err := resource.New(ctx,
 		resource.WithAttributes(semconv.ServiceNameKey.String(serviceName)),
@@ -48,13 +50,15 @@ func TestMimirMetricsIntegration(t *testing.T) {
 		QueueDir:       queueDir,
 	}
 
-	provider, err := Setup(ctx, cfg, res)
+	provider, err := Init(ctx, cfg, res)
 	if err != nil {
 		t.Fatalf("meter setup: %v", err)
 	}
-	defer provider.Shutdown(context.Background())
+	if provider == nil || provider.provider == nil {
+		t.Fatal("expected global provider")
+	}
 
-	m := otel.Meter("goo11y/integration")
+	m := Meter("goo11y/global")
 	counter, err := m.Int64Counter(metricName)
 	if err != nil {
 		t.Fatalf("create counter: %v", err)
@@ -67,7 +71,7 @@ func TestMimirMetricsIntegration(t *testing.T) {
 	}
 
 	time.Sleep(time.Second)
-	if err := provider.Shutdown(ctx); err != nil {
+	if err := Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown provider: %v", err)
 	}
 

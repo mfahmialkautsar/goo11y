@@ -22,6 +22,7 @@ type Config struct {
 	ExportTimeout time.Duration
 	QueueDir      string
 	Credentials   auth.Credentials
+	UseGlobal     bool
 }
 
 func (c Config) withDefaults() Config {

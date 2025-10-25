@@ -46,7 +46,15 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 	tele := &Telemetry{}
 
 	if cfg.Logger.Enabled {
-		log, err := logger.New(cfg.Logger)
+		var (
+			log logger.Logger
+			err error
+		)
+		if cfg.Logger.UseGlobal {
+			log, err = logger.Init(cfg.Logger)
+		} else {
+			log, err = logger.New(cfg.Logger)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("setup logger: %w", err)
 		}
@@ -54,7 +62,15 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 	}
 
 	if cfg.Tracer.Enabled {
-		provider, err := tracer.Setup(ctx, cfg.Tracer, res)
+		var (
+			provider *tracer.Provider
+			err      error
+		)
+		if cfg.Tracer.UseGlobal {
+			provider, err = tracer.Init(ctx, cfg.Tracer, res)
+		} else {
+			provider, err = tracer.Setup(ctx, cfg.Tracer, res)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("setup tracer: %w", err)
 		}
@@ -65,7 +81,15 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 	}
 
 	if cfg.Meter.Enabled {
-		provider, err := meter.Setup(ctx, cfg.Meter, res)
+		var (
+			provider *meter.Provider
+			err      error
+		)
+		if cfg.Meter.UseGlobal {
+			provider, err = meter.Init(ctx, cfg.Meter, res)
+		} else {
+			provider, err = meter.Setup(ctx, cfg.Meter, res)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("setup meter: %w", err)
 		}
@@ -75,14 +99,28 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		})
 
 		if cfg.Meter.Runtime.Enabled {
-			if err := provider.RegisterRuntimeMetrics(ctx, cfg.Meter.Runtime); err != nil {
-				tele.emitWarn(ctx, "register runtime metrics", err)
+			var regErr error
+			if cfg.Meter.UseGlobal {
+				regErr = meter.RegisterRuntimeMetrics(ctx, cfg.Meter.Runtime)
+			} else {
+				regErr = provider.RegisterRuntimeMetrics(ctx, cfg.Meter.Runtime)
+			}
+			if regErr != nil {
+				tele.emitWarn(ctx, "register runtime metrics", regErr)
 			}
 		}
 	}
 
 	if cfg.Profiler.Enabled {
-		controller, err := profiler.Setup(cfg.Profiler)
+		var (
+			controller *profiler.Controller
+			err        error
+		)
+		if cfg.Profiler.UseGlobal {
+			controller, err = profiler.Init(cfg.Profiler)
+		} else {
+			controller, err = profiler.Setup(cfg.Profiler)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("setup profiler: %w", err)
 		}
@@ -93,7 +131,7 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 	}
 
 	if tele.Logger != nil && tele.Tracer != nil {
-		tele.Logger.SetTraceProvider(logger.TraceProviderFunc(func(ctx context.Context) (logger.TraceContext, bool) {
+		provider := logger.TraceProviderFunc(func(ctx context.Context) (logger.TraceContext, bool) {
 			if ctx == nil {
 				return logger.TraceContext{}, false
 			}
@@ -105,7 +143,12 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 				TraceID: spanCtx.TraceID().String(),
 				SpanID:  spanCtx.SpanID().String(),
 			}, true
-		}))
+		})
+		if cfg.Logger.UseGlobal {
+			logger.SetTraceProvider(provider)
+		} else {
+			tele.Logger.SetTraceProvider(provider)
+		}
 	}
 
 	return tele, nil

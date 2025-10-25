@@ -23,6 +23,7 @@ type Config struct {
 	Writers     []io.Writer
 	OTLP        OTLPConfig
 	File        FileConfig
+	UseGlobal   bool
 }
 
 // OTLPConfig captures OTLP/HTTP settings for log export.

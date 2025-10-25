@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
@@ -17,7 +16,10 @@ import (
 	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
-func TestTempoTracingIntegration(t *testing.T) {
+func TestGlobalTempoTracingIntegration(t *testing.T) {
+	Use(nil)
+	t.Cleanup(func() { Use(nil) })
+
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
@@ -28,8 +30,8 @@ func TestTempoTracingIntegration(t *testing.T) {
 	}
 
 	queueDir := t.TempDir()
-	serviceName := fmt.Sprintf("goo11y-it-tracer-%d", time.Now().UnixNano())
-	labelValue := fmt.Sprintf("traces-%d", time.Now().UnixNano())
+	serviceName := fmt.Sprintf("goo11y-it-global-tracer-%d", time.Now().UnixNano())
+	labelValue := fmt.Sprintf("global-traces-%d", time.Now().UnixNano())
 
 	res, err := resource.New(ctx,
 		resource.WithAttributes(semconv.ServiceNameKey.String(serviceName)),
@@ -48,17 +50,19 @@ func TestTempoTracingIntegration(t *testing.T) {
 		QueueDir:      queueDir,
 	}
 
-	provider, err := Setup(ctx, cfg, res)
+	provider, err := Init(ctx, cfg, res)
 	if err != nil {
 		t.Fatalf("tracer setup: %v", err)
 	}
-	defer provider.Shutdown(context.Background())
+	if provider == nil || provider.provider == nil {
+		t.Fatal("expected global tracer provider")
+	}
 
-	tracer := otel.Tracer("goo11y/integration")
-	spanCtx, span := tracer.Start(ctx, "integration-span", trace.WithAttributes(attribute.String("test_case", labelValue)))
+	tr := Tracer("goo11y/global")
+	spanCtx, span := tr.Start(ctx, "global-integration-span", trace.WithAttributes(attribute.String("test_case", labelValue)))
 	traceID := span.SpanContext().TraceID().String()
 
-	_, child := tracer.Start(spanCtx, "integration-child", trace.WithAttributes(attribute.String("test_case", labelValue)))
+	_, child := tr.Start(spanCtx, "global-integration-child", trace.WithAttributes(attribute.String("test_case", labelValue)))
 	child.AddEvent("child-event", trace.WithAttributes(attribute.String("test_case", labelValue)))
 	time.Sleep(50 * time.Millisecond)
 	child.End()
@@ -66,7 +70,7 @@ func TestTempoTracingIntegration(t *testing.T) {
 	span.AddEvent("parent-event", trace.WithAttributes(attribute.String("test_case", labelValue)))
 	span.End()
 
-	if err := provider.Shutdown(ctx); err != nil {
+	if err := Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown provider: %v", err)
 	}
 

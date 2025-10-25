@@ -17,6 +17,7 @@ type Config struct {
 	MutexProfileFraction int
 	BlockProfileRate     int
 	Credentials          auth.Credentials
+	UseGlobal            bool
 }
 
 func (c Config) withDefaults() Config {
