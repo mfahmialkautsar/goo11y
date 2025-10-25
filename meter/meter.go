@@ -21,12 +21,11 @@ type Provider struct {
 // Setup configures an OTLP/HTTP meter provider and registers it globally.
 func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {
 	cfg = cfg.withDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	if !cfg.Enabled {
 		return &Provider{}, nil
-	}
-
-	if cfg.Endpoint == "" {
-		return nil, fmt.Errorf("meter endpoint is required")
 	}
 
 	opts := []otlpmetrichttp.Option{

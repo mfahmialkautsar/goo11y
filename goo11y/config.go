@@ -84,14 +84,17 @@ func (c Config) validate() error {
 	if c.Resource.ServiceName == "" {
 		return errors.New("resource.service_name is required")
 	}
-	if c.Tracer.Enabled && c.Tracer.Endpoint == "" {
-		return errors.New("tracer.endpoint is required when tracer is enabled")
+	if err := c.Logger.ApplyDefaults().Validate(); err != nil {
+		return err
 	}
-	if c.Meter.Enabled && c.Meter.Endpoint == "" {
-		return errors.New("meter.endpoint is required when meter is enabled")
+	if err := c.Tracer.ApplyDefaults().Validate(); err != nil {
+		return err
 	}
-	if c.Profiler.Enabled && c.Profiler.ServerURL == "" {
-		return errors.New("profiler.server_url is required when profiler is enabled")
+	if err := c.Meter.ApplyDefaults().Validate(); err != nil {
+		return err
+	}
+	if err := c.Profiler.ApplyDefaults().Validate(); err != nil {
+		return err
 	}
 	return nil
 }

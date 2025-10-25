@@ -1,6 +1,10 @@
 package profiler
 
-import "github.com/mfahmialkautsar/goo11y/auth"
+import (
+	"errors"
+
+	"github.com/mfahmialkautsar/goo11y/auth"
+)
 
 const (
 	defaultMutexProfileFraction = 5
@@ -45,4 +49,23 @@ func (c Config) withDefaults() Config {
 		c.Credentials = auth.FromEnv("PROFILER")
 	}
 	return c
+}
+
+// ApplyDefaults returns a copy of the config with default values populated.
+func (c Config) ApplyDefaults() Config {
+	return c.withDefaults()
+}
+
+// Validate ensures the profiler configuration is complete when profiling is enabled.
+func (c Config) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.ServiceName == "" {
+		return errors.New("profiler service_name is required")
+	}
+	if c.ServerURL == "" {
+		return errors.New("profiler server_url is required")
+	}
+	return nil
 }

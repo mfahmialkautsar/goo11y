@@ -15,15 +15,11 @@ type Controller struct {
 // Setup starts the profiler according to the provided configuration.
 func Setup(cfg Config) (*Controller, error) {
 	cfg = cfg.withDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	if !cfg.Enabled {
 		return &Controller{}, nil
-	}
-
-	if cfg.ServerURL == "" {
-		return nil, fmt.Errorf("profiler server_url is required")
-	}
-	if cfg.ServiceName == "" {
-		return nil, fmt.Errorf("profiler service_name is required")
 	}
 
 	headers := cfg.Credentials.HeaderMap()

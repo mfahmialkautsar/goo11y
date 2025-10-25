@@ -45,17 +45,7 @@ func newOTLPWriter(cfg OTLPConfig, serviceName, environment string) (io.Writer, 
 	}
 	queue.Start(context.Background(), spool.HTTPHandler(client))
 
-	headers := map[string][]string{
-		"Content-Type": {"application/json"},
-	}
-	for key, value := range cfg.Headers {
-		trimmedKey := strings.TrimSpace(key)
-		trimmedValue := strings.TrimSpace(value)
-		if trimmedKey == "" || trimmedValue == "" {
-			continue
-		}
-		headers[trimmedKey] = []string{trimmedValue}
-	}
+	headers := cfg.headerMap()
 
 	resourceAttrs := make([]otlpKeyValue, 0, 4)
 	if serviceName != "" {

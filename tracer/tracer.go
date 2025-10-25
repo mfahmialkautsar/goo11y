@@ -21,12 +21,11 @@ type Provider struct {
 // Setup initialises an OTLP/HTTP tracer provider based on the provided configuration.
 func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {
 	cfg = cfg.withDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	if !cfg.Enabled {
 		return &Provider{}, nil
-	}
-
-	if cfg.Endpoint == "" {
-		return nil, fmt.Errorf("tracer endpoint is required")
 	}
 
 	opts := []otlptracehttp.Option{

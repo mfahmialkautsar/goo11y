@@ -1,6 +1,7 @@
 package meter
 
 import (
+	"errors"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/auth"
@@ -38,4 +39,23 @@ func (c Config) withDefaults() Config {
 		c.Credentials = auth.FromEnv("METER")
 	}
 	return c
+}
+
+// ApplyDefaults returns a copy of the config with default values populated.
+func (c Config) ApplyDefaults() Config {
+	return c.withDefaults()
+}
+
+// Validate ensures the configuration is complete when metrics are enabled.
+func (c Config) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.ServiceName == "" {
+		return errors.New("meter service_name is required")
+	}
+	if c.Endpoint == "" {
+		return errors.New("meter endpoint is required")
+	}
+	return nil
 }
