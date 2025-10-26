@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/pkgerrors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -141,17 +145,17 @@ func (l *zerologLogger) With(fields ...any) Logger {
 
 // Debug emits a debug-level message.
 func (l *zerologLogger) Debug(msg string, fields ...any) {
-	l.emit(l.core.base.Debug().Caller(1), msg, fields)
+	l.emit("debug", nil, l.core.base.Debug().Caller(1), msg, fields)
 }
 
 // Info emits an info-level message.
 func (l *zerologLogger) Info(msg string, fields ...any) {
-	l.emit(l.core.base.Info().Caller(1), msg, fields)
+	l.emit("info", nil, l.core.base.Info().Caller(1), msg, fields)
 }
 
 // Warn emits a warning-level message.
 func (l *zerologLogger) Warn(msg string, fields ...any) {
-	l.emit(l.core.base.Warn().Caller(1), msg, fields)
+	l.emit("warn", nil, l.core.base.Warn().Caller(1), msg, fields)
 }
 
 // Error emits an error-level message capturing the supplied error stack if present.
@@ -160,7 +164,7 @@ func (l *zerologLogger) Error(err error, msg string, fields ...any) {
 	if err != nil {
 		event = event.Stack().Err(err)
 	}
-	l.emit(event, msg, fields)
+	l.emit("error", err, event, msg, fields)
 }
 
 // Fatal logs the error and terminates execution via zerolog's fatal semantics.
@@ -169,7 +173,7 @@ func (l *zerologLogger) Fatal(err error, msg string, fields ...any) {
 	if err != nil {
 		event = event.Stack().Err(err)
 	}
-	l.emit(event, msg, fields)
+	l.emit("fatal", err, event, msg, fields)
 }
 
 // SetTraceProvider configures trace metadata injection for subsequent log events.
@@ -183,7 +187,7 @@ func (l *zerologLogger) SetTraceProvider(provider TraceProvider) {
 	l.core.traceProvider.Store(provider)
 }
 
-func (l *zerologLogger) emit(event *zerolog.Event, msg string, fields []any) {
+func (l *zerologLogger) emit(level string, err error, event *zerolog.Event, msg string, fields []any) {
 	if event == nil {
 		return
 	}
@@ -193,8 +197,38 @@ func (l *zerologLogger) emit(event *zerolog.Event, msg string, fields []any) {
 		combined = append(combined, l.static...)
 	}
 	combined = append(combined, fields...)
+	l.recordSpanEvent(level, err, msg, combined)
 	applyFields(event, combined)
 	event.Msg(msg)
+}
+
+func (l *zerologLogger) recordSpanEvent(level string, err error, msg string, fields []any) {
+	ctx := l.ctx
+	if ctx == nil {
+		return
+	}
+	span := trace.SpanFromContext(ctx)
+	if span == nil || !span.IsRecording() {
+		return
+	}
+
+	attrs := make([]attribute.KeyValue, 0, len(fields)/2+4)
+	attrs = append(attrs,
+		attribute.String("log.level", level),
+		attribute.String("log.message", msg),
+	)
+	if err != nil {
+		attrs = append(attrs,
+			attribute.String("error.type", fmt.Sprintf("%T", err)),
+			attribute.String("error.message", err.Error()),
+		)
+	}
+	attrs = append(attrs, attributesFromFields(fields)...)
+	eventName := "log"
+	if msg != "" {
+		eventName = msg
+	}
+	span.AddEvent(eventName, trace.WithAttributes(attrs...))
 }
 
 func (l *zerologLogger) applyTrace(event *zerolog.Event) {
@@ -250,4 +284,69 @@ func applyFields(event *zerolog.Event, fields []any) {
 			event.Interface(key, v)
 		}
 	}
+}
+
+func attributesFromFields(fields []any) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, len(fields)/2)
+	for i := 0; i+1 < len(fields); i += 2 {
+		key, ok := fields[i].(string)
+		if !ok || key == "" {
+			continue
+		}
+		if attr, ok := attributeFromValue(key, fields[i+1]); ok {
+			attrs = append(attrs, attr)
+		}
+	}
+	return attrs
+}
+
+func attributeFromValue(key string, value any) (attribute.KeyValue, bool) {
+	switch v := value.(type) {
+	case string:
+		return attribute.String(key, v), true
+	case fmt.Stringer:
+		return attribute.String(key, v.String()), true
+	case error:
+		return attribute.String(key, v.Error()), true
+	case bool:
+		return attribute.Bool(key, v), true
+	case int:
+		return attribute.Int64(key, int64(v)), true
+	case int8:
+		return attribute.Int64(key, int64(v)), true
+	case int16:
+		return attribute.Int64(key, int64(v)), true
+	case int32:
+		return attribute.Int64(key, int64(v)), true
+	case int64:
+		return attribute.Int64(key, v), true
+	case uint:
+		return attributeFromUnsigned(key, uint64(v))
+	case uint8:
+		return attributeFromUnsigned(key, uint64(v))
+	case uint16:
+		return attributeFromUnsigned(key, uint64(v))
+	case uint32:
+		return attributeFromUnsigned(key, uint64(v))
+	case uint64:
+		return attributeFromUnsigned(key, v)
+	case float32:
+		return attribute.Float64(key, float64(v)), true
+	case float64:
+		return attribute.Float64(key, v), true
+	case []byte:
+		return attribute.String(key, string(v)), true
+	default:
+		if value == nil {
+			return attribute.String(key, ""), true
+		}
+		return attribute.String(key, fmt.Sprint(value)), true
+	}
+}
+
+func attributeFromUnsigned(key string, value uint64) (attribute.KeyValue, bool) {
+	if value > math.MaxInt64 {
+		return attribute.String(key, strconv.FormatUint(value, 10)), true
+	}
+	return attribute.Int64(key, int64(value)), true
 }

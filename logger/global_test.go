@@ -6,6 +6,10 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type stubLogger struct {
@@ -175,4 +179,74 @@ func TestUseNilResetsGlobalLogger(t *testing.T) {
 	Warn("noop")
 	Error(nil, "noop")
 	Fatal(nil, "noop")
+}
+
+func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
+	Use(nil)
+	t.Cleanup(func() { Use(nil) })
+
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "global-span",
+		Environment: "test",
+		Console:     false,
+		Level:       "debug",
+		Writers:     []io.Writer{&buf},
+	}
+
+	log, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+	Use(log)
+
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+	})
+
+	tracer := tp.Tracer("logger/global")
+	ctx, span := tracer.Start(context.Background(), "global-log-span")
+
+	SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
+		sc := trace.SpanContextFromContext(ctx)
+		if !sc.IsValid() {
+			return TraceContext{}, false
+		}
+		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
+	}))
+
+	boom := errors.New("explode")
+	WithContext(ctx).Error(boom, "global-span-log", "foo", "bar")
+
+	span.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	events := spans[0].Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	event := events[0]
+	assertAttrString(t, event.Attributes, "log.level", "error")
+	assertAttrString(t, event.Attributes, "log.message", "global-span-log")
+	assertAttrString(t, event.Attributes, "foo", "bar")
+	assertAttrString(t, event.Attributes, "error.message", boom.Error())
+	assertAttrString(t, event.Attributes, "error.type", "*errors.errorString")
+
+	entry := decodeLogLine(t, buf.Bytes())
+	if entry["message"] != "global-span-log" {
+		t.Fatalf("unexpected message: %v", entry["message"])
+	}
+	if entry["foo"] != "bar" {
+		t.Fatalf("unexpected foo: %v", entry["foo"])
+	}
 }

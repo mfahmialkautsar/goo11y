@@ -3,11 +3,15 @@ package logger
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"testing"
 	"time"
 
 	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestFileLoggingIntegration(t *testing.T) {
@@ -91,4 +95,63 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
 		t.Fatalf("find log entry: %v", err)
 	}
+}
+
+func TestLoggerSpanEventsIntegration(t *testing.T) {
+	var discard io.Writer = io.Discard
+	cfg := Config{
+		Enabled:     true,
+		Level:       "debug",
+		Environment: "integration",
+		ServiceName: "logger-span-events",
+		Console:     false,
+		Writers:     []io.Writer{discard},
+	}
+
+	log, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+	})
+
+	tracer := tp.Tracer("logger/integration")
+	ctx, span := tracer.Start(context.Background(), "logger-span-events")
+
+	log.SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
+		sc := trace.SpanContextFromContext(ctx)
+		if !sc.IsValid() {
+			return TraceContext{}, false
+		}
+		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
+	}))
+
+	contextual := log.WithContext(ctx)
+	contextual.Debug("debug-event")
+	contextual.Warn("warn-event", "test_case", "logger_span_events")
+
+	span.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	events := spans[0].Events()
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	assertAttrString(t, events[0].Attributes, "log.level", "debug")
+	assertAttrString(t, events[0].Attributes, "log.message", "debug-event")
+
+	assertAttrString(t, events[1].Attributes, "log.level", "warn")
+	assertAttrString(t, events[1].Attributes, "log.message", "warn-event")
+	assertAttrString(t, events[1].Attributes, "test_case", "logger_span_events")
 }

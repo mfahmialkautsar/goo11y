@@ -11,7 +11,145 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
+
+func TestLoggerAddsSpanEvents(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "event-logger",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+		Level:       "debug",
+	}
+
+	log, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+	})
+
+	tracer := tp.Tracer("logger/test")
+	ctx, span := tracer.Start(context.Background(), "log-span")
+	traceID := span.SpanContext().TraceID().String()
+	spanID := span.SpanContext().SpanID().String()
+
+	log.SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
+		sc := trace.SpanContextFromContext(ctx)
+		if !sc.IsValid() {
+			return TraceContext{}, false
+		}
+		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
+	}))
+
+	log.WithContext(ctx).With("static", "value").Info("span-log", "count", 7, "ratio", 0.5, "flag", true)
+	span.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	events := spans[0].Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	event := events[0]
+	if event.Name != "span-log" {
+		t.Fatalf("unexpected event name: %s", event.Name)
+	}
+
+	assertAttrString(t, event.Attributes, "log.level", "info")
+	assertAttrString(t, event.Attributes, "log.message", "span-log")
+	assertAttrString(t, event.Attributes, "static", "value")
+	assertAttrInt(t, event.Attributes, "count", 7)
+	assertAttrFloat(t, event.Attributes, "ratio", 0.5)
+	assertAttrBool(t, event.Attributes, "flag", true)
+
+	entry := decodeLogLine(t, buf.Bytes())
+	if got := entry[traceIDField]; got != traceID {
+		t.Fatalf("unexpected trace_id: %v", got)
+	}
+	if got := entry[spanIDField]; got != spanID {
+		t.Fatalf("unexpected span_id: %v", got)
+	}
+	if got := entry["static"]; got != "value" {
+		t.Fatalf("unexpected static value: %v", got)
+	}
+	if got := entry["count"]; got != float64(7) {
+		t.Fatalf("unexpected count: %v", got)
+	}
+	if got := entry["ratio"]; got != 0.5 {
+		t.Fatalf("unexpected ratio: %v", got)
+	}
+	if got := entry["flag"]; got != true {
+		t.Fatalf("unexpected flag: %v", got)
+	}
+}
+
+func TestLoggerSpanEventDefaultName(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "default-event-logger",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+		Level:       "info",
+	}
+
+	log, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+	})
+
+	tracer := tp.Tracer("logger/test-default")
+	ctx, span := tracer.Start(context.Background(), "log-span-default")
+	log.SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
+		sc := trace.SpanContextFromContext(ctx)
+		if !sc.IsValid() {
+			return TraceContext{}, false
+		}
+		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
+	}))
+
+	log.WithContext(ctx).Info("")
+	span.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	events := spans[0].Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Name != "log" {
+		t.Fatalf("unexpected event name: %s", events[0].Name)
+	}
+}
 
 func TestLoggerInjectsTraceMetadata(t *testing.T) {
 	var buf bytes.Buffer
@@ -234,5 +372,64 @@ func waitForFileEntry(t *testing.T, path, expectedMessage string) map[string]any
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("log message %q not found in %s", expectedMessage, path)
+	return nil
+}
+
+func assertAttrString(t *testing.T, attrs []attribute.KeyValue, key, want string) {
+	t.Helper()
+	got := attrValue(t, attrs, key)
+	str, ok := got.(string)
+	if !ok {
+		t.Fatalf("attribute %s not string: %T", key, got)
+	}
+	if str != want {
+		t.Fatalf("attribute %s mismatch: want %q got %q", key, want, str)
+	}
+}
+
+func assertAttrInt(t *testing.T, attrs []attribute.KeyValue, key string, want int64) {
+	t.Helper()
+	got := attrValue(t, attrs, key)
+	num, ok := got.(int64)
+	if !ok {
+		t.Fatalf("attribute %s not int64: %T", key, got)
+	}
+	if num != want {
+		t.Fatalf("attribute %s mismatch: want %d got %d", key, want, num)
+	}
+}
+
+func assertAttrFloat(t *testing.T, attrs []attribute.KeyValue, key string, want float64) {
+	t.Helper()
+	got := attrValue(t, attrs, key)
+	num, ok := got.(float64)
+	if !ok {
+		t.Fatalf("attribute %s not float64: %T", key, got)
+	}
+	if num != want {
+		t.Fatalf("attribute %s mismatch: want %v got %v", key, want, num)
+	}
+}
+
+func assertAttrBool(t *testing.T, attrs []attribute.KeyValue, key string, want bool) {
+	t.Helper()
+	got := attrValue(t, attrs, key)
+	b, ok := got.(bool)
+	if !ok {
+		t.Fatalf("attribute %s not bool: %T", key, got)
+	}
+	if b != want {
+		t.Fatalf("attribute %s mismatch: want %v got %v", key, want, b)
+	}
+}
+
+func attrValue(t *testing.T, attrs []attribute.KeyValue, key string) any {
+	t.Helper()
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
+			return attr.Value.AsInterface()
+		}
+	}
+	t.Fatalf("attribute %s not found", key)
 	return nil
 }
