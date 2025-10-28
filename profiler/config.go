@@ -2,6 +2,7 @@ package profiler
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/mfahmialkautsar/goo11y/auth"
 )
@@ -44,6 +45,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.BlockProfileRate <= 0 {
 		c.BlockProfileRate = defaultBlockProfileRate
+	}
+	if !c.Enabled && strings.TrimSpace(c.ServerURL) != "" {
+		c.Enabled = true
 	}
 	return c
 }

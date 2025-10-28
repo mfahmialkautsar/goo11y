@@ -47,6 +47,9 @@ type FileConfig struct {
 }
 
 func (c Config) withDefaults() Config {
+	if !c.Enabled {
+		c.Enabled = true
+	}
 	if c.Level == "" {
 		c.Level = defaultLevel
 	}

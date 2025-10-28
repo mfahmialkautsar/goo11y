@@ -44,7 +44,7 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 		return nil, fmt.Errorf("create trace client: %w", err)
 	}
 	opts = append(opts, otlptracehttp.WithHTTPClient(client))
-	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false}))
+	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true}))
 
 	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {

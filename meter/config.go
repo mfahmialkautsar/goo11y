@@ -2,6 +2,7 @@ package meter
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/auth"
@@ -34,6 +35,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.QueueDir == "" {
 		c.QueueDir = fileutil.DefaultQueueDir("metrics")
+	}
+	if !c.Enabled && strings.TrimSpace(c.Endpoint) != "" {
+		c.Enabled = true
 	}
 	return c
 }

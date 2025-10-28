@@ -64,11 +64,6 @@ func (c *Config) applyDefaults() {
 	if c.Resource.ServiceNamespace == "" {
 		c.Resource.ServiceNamespace = defaultServiceNamespace
 	}
-	if c.Profiler.Enabled {
-		if c.Profiler.ServiceName == "" {
-			c.Profiler.ServiceName = c.Resource.ServiceName
-		}
-	}
 	if c.Logger.ServiceName == "" {
 		c.Logger.ServiceName = c.Resource.ServiceName
 	}
@@ -78,6 +73,14 @@ func (c *Config) applyDefaults() {
 	if c.Meter.ServiceName == "" {
 		c.Meter.ServiceName = c.Resource.ServiceName
 	}
+	if c.Profiler.ServiceName == "" {
+		c.Profiler.ServiceName = c.Resource.ServiceName
+	}
+
+	c.Logger = c.Logger.ApplyDefaults()
+	c.Tracer = c.Tracer.ApplyDefaults()
+	c.Meter = c.Meter.ApplyDefaults()
+	c.Profiler = c.Profiler.ApplyDefaults()
 }
 
 func (c Config) validate() error {

@@ -44,7 +44,7 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 		return nil, fmt.Errorf("create metric client: %w", err)
 	}
 	opts = append(opts, otlpmetrichttp.WithHTTPClient(client))
-	opts = append(opts, otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: false}))
+	opts = append(opts, otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: true}))
 
 	exporter, err := otlpmetrichttp.New(ctx, opts...)
 	if err != nil {
