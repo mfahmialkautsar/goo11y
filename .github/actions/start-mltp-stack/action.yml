@@ -1,0 +1,33 @@
+name: 'Start MLTP Stack'
+description: 'Start and wait for Grafana MLTP stack to be ready'
+
+inputs:
+  services:
+    description: 'Specific services to start (optional, defaults to all)'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Start Grafana MLTP stack
+      shell: bash
+      run: |
+        git clone --depth 1 https://github.com/grafana/intro-to-mltp.git /tmp/intro-to-mltp
+        docker compose -f /tmp/intro-to-mltp/docker-compose.yml up -d alloy mimir tempo pyroscope loki
+
+    - name: Wait for Grafana MLTP stack
+      shell: bash
+      run: |
+        for attempt in $(seq 1 60); do
+          if curl --silent --show-error --connect-timeout 5 --max-time 5 http://localhost:4318/ >/dev/null 2>&1 \
+            && curl -fsS http://localhost:3100/ready >/dev/null 2>&1 \
+            && curl -fsS http://localhost:9009/ready >/dev/null 2>&1 \
+            && curl -fsS http://localhost:3200/ready >/dev/null 2>&1 \
+            && curl -fsS http://localhost:4040/ready >/dev/null 2>&1; then
+            exit 0
+          fi
+          sleep 5
+        done
+        docker compose -f /tmp/intro-to-mltp/docker-compose.yml logs
+        exit 1

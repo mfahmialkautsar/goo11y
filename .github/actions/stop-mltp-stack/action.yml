@@ -1,0 +1,9 @@
+name: 'Stop MLTP Stack'
+description: 'Stop and clean up Grafana MLTP stack'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Stop Grafana MLTP stack
+      shell: bash
+      run: docker compose -f /tmp/intro-to-mltp/docker-compose.yml down -v

@@ -1,0 +1,35 @@
+name: OpenSSF Best Practices
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate required policies
+        run: |
+          set -euo pipefail
+          required=(LICENSE README.md SECURITY.md CODE_OF_CONDUCT.md CONTRIBUTING.md)
+          missing=()
+          for file in "${required[@]}"; do
+            if [ ! -s "$file" ]; then
+              missing+=("$file")
+            fi
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            printf 'Missing or empty required files: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi

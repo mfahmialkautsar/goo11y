@@ -1,0 +1,46 @@
+name: Fuzzing
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -buildvcs=false
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Start MLTP stack
+        uses: ./.github/actions/start-mltp-stack
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run fuzz tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pkg in $(go list ./...); do
+            echo "Fuzzing ${pkg}"
+            go test -run=^$ -fuzz=Fuzz -fuzztime=30s "${pkg}"
+          done
+
+      - name: Stop MLTP stack
+        if: always()
+        uses: ./.github/actions/stop-mltp-stack

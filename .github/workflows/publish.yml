@@ -1,0 +1,141 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "confirm" to approve publishing.'
+        required: true
+      target_sha:
+        description: 'Commit SHA to publish (defaults to the workflow commit).'
+        required: false
+      version:
+        description: 'Semantic version tag to publish (e.g., v1.2.3).'
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  GOFLAGS: -buildvcs=false
+
+jobs:
+  publish:
+    if: ${{ inputs.confirm == 'confirm' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Validate dependent workflows
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const required = [
+              "CI",
+              "Report Card",
+              "OpenSSF Scorecard",
+              "OpenSSF Best Practices",
+              "Fuzzing",
+            ];
+            const targetSha = ((context.payload.inputs && context.payload.inputs.target_sha) ? context.payload.inputs.target_sha : context.sha).trim();
+            const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: targetSha,
+              per_page: 100,
+            });
+            const misses = [];
+            for (const name of required) {
+              const run = data.workflow_runs.find(r => r.name === name);
+              if (!run) {
+                misses.push(`${name}: not found`);
+                continue;
+              }
+              if (run.conclusion !== "success") {
+                const state = run.conclusion ? run.conclusion : run.status;
+                misses.push(`${name}: ${state}`);
+              }
+            }
+            if (misses.length > 0) {
+              core.setFailed(`Dependent workflows must succeed before publishing: ${misses.join(', ')}`);
+            }
+
+      - name: Validate version input
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='${{ inputs.version }}'
+          if [ -z "$version" ]; then
+            echo "version input is required" >&2
+            exit 1
+          fi
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must follow semantic versioning and start with 'v' (e.g., v1.2.3)" >&2
+            exit 1
+          fi
+
+      - name: Ensure tag does not exist
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "tag $VERSION already exists locally" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "tag $VERSION already exists on origin" >&2
+            exit 1
+          fi
+
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git tag -a "$VERSION" -m "Release $VERSION"
+
+      - name: Push tag
+        env:
+          VERSION: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git push origin "refs/tags/$VERSION"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Publish module to Go proxy
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          go version
+          module=$(go list -m)
+          for attempt in $(seq 1 10); do
+            if curl -fsS "https://proxy.golang.org/${module}/@v/${VERSION}.info" >/dev/null && \
+               curl -fsS "https://sum.golang.org/lookup/${module}@${VERSION}" >/tmp/module.sum; then
+              cat /tmp/module.sum
+              exit 0
+            fi
+            echo "Module ${module}@${VERSION} not yet available, retrying in 30s..." >&2
+            sleep 30
+          done
+          echo "Module ${module}@${VERSION} not available via proxy after retries" >&2
+          exit 1

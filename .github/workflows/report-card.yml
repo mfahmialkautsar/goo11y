@@ -1,0 +1,38 @@
+name: Report Card
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -buildvcs=false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Go Report Card CLI
+        run: go install github.com/gojp/goreportcard/cmd/goreportcard-cli@6c0fa925565c9ed0441b6fee6f599fd14037dc7d
+
+      - name: Install golint
+        run: go install golang.org/x/lint/golint@latest
+
+      - name: Run Go Report Card
+        run: $(go env GOPATH)/bin/goreportcard-cli -v ./...
