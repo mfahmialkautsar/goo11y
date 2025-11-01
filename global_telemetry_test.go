@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/grafana/pyroscope-go"
+	"github.com/mfahmialkautsar/goo11y/internal/testutil"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/profiler"
 	"github.com/mfahmialkautsar/goo11y/tracer"
@@ -129,7 +130,7 @@ func TestTelemetryLinksTracesToProfilesWithGlobalProviders(t *testing.T) {
 		if span.Name() != "global-profiler-link-span" {
 			continue
 		}
-		attrs := attrsToMap(span.Attributes())
+		attrs := testutil.AttrsToMap(span.Attributes())
 		if attrs[profiler.TraceProfileAttributeKey] != profileID {
 			t.Fatalf("expected profile id %q, got %v", profileID, attrs[profiler.TraceProfileAttributeKey])
 		}

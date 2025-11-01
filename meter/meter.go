@@ -5,14 +5,10 @@ import (
 	"fmt"
 
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
-	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
-	"google.golang.org/grpc/credentials"
 )
 
 // Provider wraps the SDK meter provider.
@@ -70,54 +66,6 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 		provider: provider,
 		meter:    provider.Meter(cfg.ServiceName),
 	}, nil
-}
-
-func setupHTTPExporter(ctx context.Context, cfg Config, baseURL string) (sdkmetric.Exporter, error) {
-	opts := []otlpmetrichttp.Option{
-		otlpmetrichttp.WithEndpoint(baseURL),
-		otlpmetrichttp.WithTimeout(cfg.ExportInterval),
-		otlpmetrichttp.WithURLPath("/v1/metrics"),
-	}
-
-	if cfg.Insecure {
-		opts = append(opts, otlpmetrichttp.WithInsecure())
-	}
-
-	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
-		opts = append(opts, otlpmetrichttp.WithHeaders(headers))
-	}
-
-	if cfg.UseSpool {
-		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportInterval)
-		if err != nil {
-			return nil, fmt.Errorf("create metric client: %w", err)
-		}
-		opts = append(opts, otlpmetrichttp.WithHTTPClient(client))
-	}
-	opts = append(opts, otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: true}))
-
-	return otlpmetrichttp.New(ctx, opts...)
-}
-
-func setupGRPCExporter(ctx context.Context, cfg Config, baseURL string) (sdkmetric.Exporter, error) {
-	opts := []otlpmetricgrpc.Option{
-		otlpmetricgrpc.WithEndpoint(baseURL),
-		otlpmetricgrpc.WithTimeout(cfg.ExportInterval),
-	}
-
-	if cfg.Insecure {
-		opts = append(opts, otlpmetricgrpc.WithInsecure())
-	} else {
-		opts = append(opts, otlpmetricgrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))
-	}
-
-	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
-		opts = append(opts, otlpmetricgrpc.WithHeaders(headers))
-	}
-
-	opts = append(opts, otlpmetricgrpc.WithRetry(otlpmetricgrpc.RetryConfig{Enabled: true}))
-
-	return otlpmetricgrpc.New(ctx, opts...)
 }
 
 // RegisterRuntimeMetrics adds basic Go runtime metrics if enabled.

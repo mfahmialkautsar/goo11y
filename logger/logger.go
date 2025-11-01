@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -267,85 +265,4 @@ func (l *zerologLogger) clone() *zerologLogger {
 		clone.static = append([]any(nil), l.static...)
 	}
 	return clone
-}
-
-func applyFields(event *zerolog.Event, fields []any) {
-	for i := 0; i+1 < len(fields); i += 2 {
-		key, ok := fields[i].(string)
-		if !ok {
-			continue
-		}
-		value := fields[i+1]
-		switch v := value.(type) {
-		case error:
-			event.Stack().Err(v)
-		default:
-			event.Interface(key, v)
-		}
-	}
-}
-
-func attributesFromFields(fields []any) []attribute.KeyValue {
-	attrs := make([]attribute.KeyValue, 0, len(fields)/2)
-	for i := 0; i+1 < len(fields); i += 2 {
-		key, ok := fields[i].(string)
-		if !ok || key == "" {
-			continue
-		}
-		if attr, ok := attributeFromValue(key, fields[i+1]); ok {
-			attrs = append(attrs, attr)
-		}
-	}
-	return attrs
-}
-
-func attributeFromValue(key string, value any) (attribute.KeyValue, bool) {
-	switch v := value.(type) {
-	case string:
-		return attribute.String(key, v), true
-	case fmt.Stringer:
-		return attribute.String(key, v.String()), true
-	case error:
-		return attribute.String(key, v.Error()), true
-	case bool:
-		return attribute.Bool(key, v), true
-	case int:
-		return attribute.Int64(key, int64(v)), true
-	case int8:
-		return attribute.Int64(key, int64(v)), true
-	case int16:
-		return attribute.Int64(key, int64(v)), true
-	case int32:
-		return attribute.Int64(key, int64(v)), true
-	case int64:
-		return attribute.Int64(key, v), true
-	case uint:
-		return attributeFromUnsigned(key, uint64(v))
-	case uint8:
-		return attributeFromUnsigned(key, uint64(v))
-	case uint16:
-		return attributeFromUnsigned(key, uint64(v))
-	case uint32:
-		return attributeFromUnsigned(key, uint64(v))
-	case uint64:
-		return attributeFromUnsigned(key, v)
-	case float32:
-		return attribute.Float64(key, float64(v)), true
-	case float64:
-		return attribute.Float64(key, v), true
-	case []byte:
-		return attribute.String(key, string(v)), true
-	default:
-		if value == nil {
-			return attribute.String(key, ""), true
-		}
-		return attribute.String(key, fmt.Sprint(value)), true
-	}
-}
-
-func attributeFromUnsigned(key string, value uint64) (attribute.KeyValue, bool) {
-	if value > math.MaxInt64 {
-		return attribute.String(key, strconv.FormatUint(value, 10)), true
-	}
-	return attribute.Int64(key, int64(value)), true
 }

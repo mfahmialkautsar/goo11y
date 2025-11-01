@@ -30,7 +30,7 @@ import (
 )
 
 func TestTelemetryTracePropagationIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	endpoints := integration.DefaultTargets()

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/grafana/pyroscope-go"
+	"github.com/mfahmialkautsar/goo11y/internal/testutil"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/profiler"
 	"github.com/mfahmialkautsar/goo11y/tracer"
@@ -76,7 +77,7 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 		t.Fatalf("expected 1 event, got %d", len(events))
 	}
 
-	attrs := attrsToMap(events[0].Attributes)
+	attrs := testutil.AttrsToMap(events[0].Attributes)
 	if got := attrs["log.level"]; got != "warn" {
 		t.Fatalf("unexpected log.level: %v", got)
 	}
@@ -86,14 +87,6 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 	if got := attrs["error"]; got != warnErr.Error() {
 		t.Fatalf("unexpected error attribute: %v", got)
 	}
-}
-
-func attrsToMap(attrs []attribute.KeyValue) map[string]any {
-	out := make(map[string]any, len(attrs))
-	for _, attr := range attrs {
-		out[string(attr.Key)] = attr.Value.AsInterface()
-	}
-	return out
 }
 
 func TestTelemetryEmitWarnSkipsNilLogger(t *testing.T) {
@@ -162,7 +155,7 @@ func TestBuildResourceComposes(t *testing.T) {
 		t.Fatalf("buildResource: %v", err)
 	}
 
-	attrs := attrsToMap(res.Attributes())
+	attrs := testutil.AttrsToMap(res.Attributes())
 	checks := map[string]string{
 		string(semconv.ServiceNameKey):               "svc",
 		string(semconv.ServiceVersionKey):            "1.2.3",
@@ -349,7 +342,7 @@ func TestTelemetryLinksTracesToProfiles(t *testing.T) {
 		if span.Name() != "profiler-link-span" {
 			continue
 		}
-		attrs := attrsToMap(span.Attributes())
+		attrs := testutil.AttrsToMap(span.Attributes())
 		if attrs[profiler.TraceProfileAttributeKey] != profileID {
 			t.Fatalf("expected profile id %q, got %v", profileID, attrs[profiler.TraceProfileAttributeKey])
 		}

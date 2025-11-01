@@ -5,15 +5,11 @@ import (
 	"fmt"
 
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
-	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/grpc/credentials"
 )
 
 // Provider wraps the SDK tracer provider to expose a narrow API.
@@ -81,54 +77,6 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	return &Provider{provider: tp}, nil
 }
 
-func setupHTTPExporter(ctx context.Context, cfg Config, baseURL string) (sdktrace.SpanExporter, error) {
-	opts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(baseURL),
-		otlptracehttp.WithTimeout(cfg.ExportTimeout),
-		otlptracehttp.WithURLPath("/v1/traces"),
-	}
-
-	if cfg.Insecure {
-		opts = append(opts, otlptracehttp.WithInsecure())
-	}
-
-	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
-		opts = append(opts, otlptracehttp.WithHeaders(headers))
-	}
-
-	if cfg.UseSpool {
-		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportTimeout)
-		if err != nil {
-			return nil, fmt.Errorf("create trace client: %w", err)
-		}
-		opts = append(opts, otlptracehttp.WithHTTPClient(client))
-	}
-	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true}))
-
-	return otlptracehttp.New(ctx, opts...)
-}
-
-func setupGRPCExporter(ctx context.Context, cfg Config, baseURL string) (sdktrace.SpanExporter, error) {
-	opts := []otlptracegrpc.Option{
-		otlptracegrpc.WithEndpoint(baseURL),
-		otlptracegrpc.WithTimeout(cfg.ExportTimeout),
-	}
-
-	if cfg.Insecure {
-		opts = append(opts, otlptracegrpc.WithInsecure())
-	} else {
-		opts = append(opts, otlptracegrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))
-	}
-
-	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
-		opts = append(opts, otlptracegrpc.WithHeaders(headers))
-	}
-
-	opts = append(opts, otlptracegrpc.WithRetry(otlptracegrpc.RetryConfig{Enabled: true}))
-
-	return otlptracegrpc.New(ctx, opts...)
-}
-
 // SpanContext extracts the span context from the provided request context.
 func (p *Provider) SpanContext(ctx context.Context) trace.SpanContext {
 	if ctx == nil {
@@ -143,15 +91,4 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return p.provider.Shutdown(ctx)
-}
-
-func samplerFromRatio(ratio float64) sdktrace.Sampler {
-	switch {
-	case ratio <= 0:
-		return sdktrace.NeverSample()
-	case ratio >= 1:
-		return sdktrace.AlwaysSample()
-	default:
-		return sdktrace.TraceIDRatioBased(ratio)
-	}
 }

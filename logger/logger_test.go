@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mfahmialkautsar/goo11y/internal/attrutil"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -437,7 +438,7 @@ func attrValue(t *testing.T, attrs []attribute.KeyValue, key string) any {
 }
 
 func TestAttributeFromUnsigned(t *testing.T) {
-	small, ok := attributeFromUnsigned("small", 42)
+	small, ok := attrutil.FromValue("small", uint(42))
 	if !ok {
 		t.Fatal("expected attribute for small unsigned")
 	}
@@ -446,7 +447,7 @@ func TestAttributeFromUnsigned(t *testing.T) {
 	}
 
 	largeVal := uint64(math.MaxInt64) + 10
-	large, ok := attributeFromUnsigned("large", largeVal)
+	large, ok := attrutil.FromValue("large", largeVal)
 	if !ok {
 		t.Fatal("expected attribute for large unsigned")
 	}
@@ -518,7 +519,7 @@ func TestAttributeFromValueCoversTypes(t *testing.T) {
 	}
 
 	for _, tc := range valueChecks {
-		kv, ok := attributeFromValue(tc.key, tc.value)
+		kv, ok := attrutil.FromValue(tc.key, tc.value)
 		if !ok {
 			t.Fatalf("expected attribute for %s", tc.key)
 		}
