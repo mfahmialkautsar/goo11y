@@ -8,10 +8,6 @@ import (
 )
 
 func registerRuntimeInstruments(_ context.Context, m metric.Meter) error {
-	if m == nil {
-		return nil
-	}
-
 	_, err := m.Int64ObservableGauge(
 		"runtime.go.goroutines",
 		metric.WithDescription("Number of live goroutines"),

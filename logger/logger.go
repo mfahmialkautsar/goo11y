@@ -180,9 +180,6 @@ func (l *zerologLogger) Fatal(err error, msg string, fields ...any) {
 
 // SetTraceProvider configures trace metadata injection for subsequent log events.
 func (l *zerologLogger) SetTraceProvider(provider TraceProvider) {
-	if l.core == nil {
-		return
-	}
 	if provider == nil {
 		provider = noopTraceProvider
 	}

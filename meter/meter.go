@@ -122,7 +122,7 @@ func setupGRPCExporter(ctx context.Context, cfg Config, baseURL string) (sdkmetr
 
 // RegisterRuntimeMetrics adds basic Go runtime metrics if enabled.
 func (p *Provider) RegisterRuntimeMetrics(ctx context.Context, cfg RuntimeConfig) error {
-	if p == nil || p.meter == nil || !cfg.Enabled {
+	if !cfg.Enabled || p.meter == nil {
 		return nil
 	}
 	return registerRuntimeInstruments(ctx, p.meter)
@@ -130,7 +130,7 @@ func (p *Provider) RegisterRuntimeMetrics(ctx context.Context, cfg RuntimeConfig
 
 // Shutdown flushes measurements and releases resources.
 func (p *Provider) Shutdown(ctx context.Context) error {
-	if p == nil || p.provider == nil {
+	if p.provider == nil {
 		return nil
 	}
 	return p.provider.Shutdown(ctx)

@@ -23,7 +23,7 @@ type Provider struct {
 
 // RegisterSpanProcessor attaches the supplied span processor to the underlying provider.
 func (p *Provider) RegisterSpanProcessor(processor sdktrace.SpanProcessor) {
-	if p == nil || p.provider == nil || processor == nil {
+	if processor == nil || p.provider == nil {
 		return
 	}
 	p.provider.RegisterSpanProcessor(processor)
@@ -139,7 +139,7 @@ func (p *Provider) SpanContext(ctx context.Context) trace.SpanContext {
 
 // Shutdown flushes and terminates the tracer provider.
 func (p *Provider) Shutdown(ctx context.Context) error {
-	if p == nil || p.provider == nil {
+	if p.provider == nil {
 		return nil
 	}
 	return p.provider.Shutdown(ctx)
