@@ -130,26 +130,7 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		})
 	}
 
-	if tele.Logger != nil && tele.Tracer != nil {
-		provider := logger.TraceProviderFunc(func(ctx context.Context) (logger.TraceContext, bool) {
-			if ctx == nil {
-				return logger.TraceContext{}, false
-			}
-			spanCtx := tele.Tracer.SpanContext(ctx)
-			if !spanCtx.IsValid() {
-				return logger.TraceContext{}, false
-			}
-			return logger.TraceContext{
-				TraceID: spanCtx.TraceID().String(),
-				SpanID:  spanCtx.SpanID().String(),
-			}, true
-		})
-		if cfg.Logger.UseGlobal {
-			logger.SetTraceProvider(provider)
-		} else {
-			tele.Logger.SetTraceProvider(provider)
-		}
-	}
+	tele.configureIntegrations(cfg)
 
 	return tele, nil
 }
@@ -175,6 +156,39 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 	}
 
 	return errs
+}
+
+func (t *Telemetry) configureIntegrations(cfg Config) {
+	if t == nil {
+		return
+	}
+
+	if t.Logger != nil && t.Tracer != nil {
+		provider := logger.TraceProviderFunc(func(ctx context.Context) (logger.TraceContext, bool) {
+			if ctx == nil {
+				return logger.TraceContext{}, false
+			}
+			spanCtx := t.Tracer.SpanContext(ctx)
+			if !spanCtx.IsValid() {
+				return logger.TraceContext{}, false
+			}
+			return logger.TraceContext{
+				TraceID: spanCtx.TraceID().String(),
+				SpanID:  spanCtx.SpanID().String(),
+			}, true
+		})
+		if cfg.Logger.UseGlobal {
+			logger.SetTraceProvider(provider)
+		} else {
+			t.Logger.SetTraceProvider(provider)
+		}
+	}
+
+	if t.Tracer != nil && t.Profiler != nil {
+		if processor := profiler.TraceProfileSpanProcessor(); processor != nil {
+			t.Tracer.RegisterSpanProcessor(processor)
+		}
+	}
 }
 
 func (t *Telemetry) emitWarn(ctx context.Context, msg string, err error) {

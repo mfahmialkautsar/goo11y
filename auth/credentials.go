@@ -74,13 +74,15 @@ func (c Credentials) extraHeaders() map[string]string {
 	}
 	headers := make(map[string]string, len(c.Headers))
 	for key, value := range c.Headers {
-		if key == "" || value == "" {
+		trimmedKey := strings.TrimSpace(key)
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
 			continue
 		}
-		if strings.EqualFold(key, "authorization") {
+		if strings.EqualFold(trimmedKey, "authorization") {
 			continue
 		}
-		headers[key] = value
+		headers[trimmedKey] = trimmedValue
 	}
 	return headers
 }

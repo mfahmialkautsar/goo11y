@@ -47,14 +47,14 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 }
 
 func TestGlobalOTLPLoggingIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
 	endpoints := testintegration.DefaultTargets()
 	ingestURL := endpoints.LogsIngestURL
 	queryBase := endpoints.LokiQueryURL
 	if err := testintegration.CheckReachable(ctx, queryBase); err != nil {
-		t.Skipf("skipping: loki unreachable at %s: %v", queryBase, err)
+		t.Fatalf("loki unreachable at %s: %v", queryBase, err)
 	}
 
 	Use(nil)

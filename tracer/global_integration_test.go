@@ -18,14 +18,14 @@ func TestGlobalTempoTracingIntegration(t *testing.T) {
 	Use(nil)
 	t.Cleanup(func() { Use(nil) })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	targets := testintegration.DefaultTargets()
 	otlpEndpoint := targets.TracesEndpoint
 	tempoBase := targets.TempoQueryURL
 	if err := testintegration.CheckReachable(ctx, tempoBase); err != nil {
-		t.Skipf("skipping: tempo unreachable at %s: %v", tempoBase, err)
+		t.Fatalf("tempo unreachable at %s: %v", tempoBase, err)
 	}
 
 	queueDir := t.TempDir()
@@ -55,6 +55,14 @@ func TestGlobalTempoTracingIntegration(t *testing.T) {
 	if provider == nil || provider.provider == nil {
 		t.Fatal("expected global tracer provider")
 	}
+	shutdownComplete := false
+	t.Cleanup(func() {
+		if !shutdownComplete {
+			if err := Shutdown(context.Background()); err != nil {
+				t.Errorf("cleanup tracer shutdown: %v", err)
+			}
+		}
+	})
 
 	tr := Tracer("goo11y/global")
 	spanCtx, span := tr.Start(ctx, "global-integration-span", trace.WithAttributes(attribute.String("test_case", labelValue)))
@@ -71,6 +79,7 @@ func TestGlobalTempoTracingIntegration(t *testing.T) {
 	if err := Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown provider: %v", err)
 	}
+	shutdownComplete = true
 
 	if err := testintegration.WaitForEmptyDir(ctx, queueDir, 200*time.Millisecond); err != nil {
 		t.Fatalf("queue did not drain: %v", err)

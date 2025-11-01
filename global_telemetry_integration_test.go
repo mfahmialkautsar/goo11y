@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/pyroscope-go"
 	"github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/meter"
+	"github.com/mfahmialkautsar/goo11y/profiler"
 	"github.com/mfahmialkautsar/goo11y/tracer"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -17,7 +19,7 @@ import (
 )
 
 func TestGlobalTelemetryIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
 	endpoints := integration.DefaultTargets()
@@ -27,14 +29,17 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	mimirQueryBase := endpoints.MimirQueryURL
 	traceEndpoint := endpoints.TracesEndpoint
 	tempoQueryBase := endpoints.TempoQueryURL
+	pyroscopeBase := endpoints.PyroscopeURL
+	pyroscopeTenant := endpoints.PyroscopeTenant
 
 	for base, name := range map[string]string{
 		lokiQueryBase:  "loki",
 		mimirQueryBase: "mimir",
 		tempoQueryBase: "tempo",
+		pyroscopeBase:  "pyroscope",
 	} {
 		if err := integration.CheckReachable(ctx, base); err != nil {
-			t.Skipf("skipping: %s unreachable at %s: %v", name, base, err)
+			t.Fatalf("%s unreachable at %s: %v", name, base, err)
 		}
 	}
 
@@ -43,7 +48,7 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	meterQueueDir := t.TempDir()
 	traceQueueDir := t.TempDir()
 
-	serviceName := fmt.Sprintf("goo11y-it-global-telemetry-%d", time.Now().UnixNano())
+	serviceName := fmt.Sprintf("goo11y-it-global-telemetry-%d.cpu", time.Now().UnixNano())
 	metricName := fmt.Sprintf("go_o11y_global_metric_total_%d", time.Now().UnixNano())
 	testCase := fmt.Sprintf("global-telemetry-%d", time.Now().UnixNano())
 	logMessage := fmt.Sprintf("global-telemetry-log-%d", time.Now().UnixNano())
@@ -87,6 +92,16 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 			QueueDir:       meterQueueDir,
 			UseGlobal:      true,
 		},
+		Profiler: profiler.Config{
+			Enabled:     true,
+			ServerURL:   pyroscopeBase,
+			ServiceName: serviceName,
+			TenantID:    pyroscopeTenant,
+			UseGlobal:   true,
+			Tags: map[string]string{
+				"test_case": testCase,
+			},
+		},
 	}
 
 	tele, err := New(ctx, teleCfg)
@@ -95,11 +110,14 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if tele != nil {
-			_ = tele.Shutdown(context.Background())
+			if err := tele.Shutdown(context.Background()); err != nil {
+				t.Errorf("cleanup telemetry shutdown: %v", err)
+			}
 		}
 		logger.Use(nil)
 		meter.Use(nil)
 		tracer.Use(nil)
+		profiler.Use(nil)
 	})
 
 	globalTracer := tracer.Tracer("goo11y/global-telemetry")
@@ -107,19 +125,24 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	traceID := span.SpanContext().TraceID().String()
 	spanID := span.SpanContext().SpanID().String()
 
-	logger.WithContext(spanCtx).Info(logMessage, "test_case", testCase)
+	profileID := fmt.Sprintf("profile-%s", traceID)
+	pyroscope.TagWrapper(spanCtx, pyroscope.Labels(profiler.TraceProfileAttributeKey, profileID), func(ctx context.Context) {
+		burnCPU(2 * time.Second)
 
-	m := meter.Meter("goo11y/global-telemetry")
-	counter, err := m.Int64Counter(metricName)
-	if err != nil {
-		t.Fatalf("create counter: %v", err)
-	}
-	metricAttrs := []attribute.KeyValue{
-		attribute.String("test_case", testCase),
-		attribute.String("trace_id", traceID),
-		attribute.String("span_id", spanID),
-	}
-	counter.Add(spanCtx, 1, metric.WithAttributes(metricAttrs...))
+		logger.WithContext(ctx).Info(logMessage, "test_case", testCase)
+
+		m := meter.Meter("goo11y/global-telemetry")
+		counter, err := m.Int64Counter(metricName)
+		if err != nil {
+			t.Fatalf("create counter: %v", err)
+		}
+		metricAttrs := []attribute.KeyValue{
+			attribute.String("test_case", testCase),
+			attribute.String("trace_id", traceID),
+			attribute.String("span_id", spanID),
+		}
+		counter.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
+	})
 
 	time.Sleep(750 * time.Millisecond)
 	span.End()
@@ -156,5 +179,8 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	}
 	if err := waitForTempoTrace(ctx, tempoQueryBase, serviceName, testCase, traceID); err != nil {
 		t.Fatalf("verify tempo trace: %v", err)
+	}
+	if err := integration.WaitForPyroscopeProfile(ctx, pyroscopeBase, pyroscopeTenant, serviceName, testCase); err != nil {
+		t.Fatalf("verify pyroscope profile: %v", err)
 	}
 }

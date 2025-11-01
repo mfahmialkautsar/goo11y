@@ -13,14 +13,14 @@ func TestGlobalPyroscopeProfilingIntegration(t *testing.T) {
 	Use(nil)
 	t.Cleanup(func() { Use(nil) })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	targets := testintegration.DefaultTargets()
 	pyroscopeBase := targets.PyroscopeURL
 	tenantID := targets.PyroscopeTenant
 	if err := testintegration.CheckReachable(ctx, pyroscopeBase); err != nil {
-		t.Skipf("skipping: pyroscope unreachable at %s: %v", pyroscopeBase, err)
+		t.Fatalf("pyroscope unreachable at %s: %v", pyroscopeBase, err)
 	}
 
 	serviceName := fmt.Sprintf("goo11y-it-global-profiler-%d.cpu", time.Now().UnixNano())
@@ -43,6 +43,14 @@ func TestGlobalPyroscopeProfilingIntegration(t *testing.T) {
 	if controller == nil {
 		t.Fatal("expected controller instance")
 	}
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			if err := Stop(); err != nil {
+				t.Errorf("cleanup profiler stop: %v", err)
+			}
+		}
+	})
 
 	burnCPU(15 * time.Second)
 
@@ -51,6 +59,7 @@ func TestGlobalPyroscopeProfilingIntegration(t *testing.T) {
 	if err := Stop(); err != nil {
 		t.Fatalf("profiler stop: %v", err)
 	}
+	stopped = true
 
 	if err := testintegration.WaitForPyroscopeProfile(ctx, pyroscopeBase, tenantID, serviceName, labelValue); err != nil {
 		t.Fatalf("pyroscope did not report service %s: %v", serviceName, err)

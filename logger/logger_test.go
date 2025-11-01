@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -432,4 +434,97 @@ func attrValue(t *testing.T, attrs []attribute.KeyValue, key string) any {
 	}
 	t.Fatalf("attribute %s not found", key)
 	return nil
+}
+
+func TestAttributeFromUnsigned(t *testing.T) {
+	small, ok := attributeFromUnsigned("small", 42)
+	if !ok {
+		t.Fatal("expected attribute for small unsigned")
+	}
+	if small.Value.AsInt64() != 42 {
+		t.Fatalf("unexpected value: %v", small.Value)
+	}
+
+	largeVal := uint64(math.MaxInt64) + 10
+	large, ok := attributeFromUnsigned("large", largeVal)
+	if !ok {
+		t.Fatal("expected attribute for large unsigned")
+	}
+	if large.Value.AsString() != strconv.FormatUint(largeVal, 10) {
+		t.Fatalf("unexpected string conversion: %v", large.Value)
+	}
+}
+
+type stringerStub struct{}
+
+func (stringerStub) String() string { return "stringer" }
+
+func TestAttributeFromValueCoversTypes(t *testing.T) {
+	valueChecks := []struct {
+		key   string
+		value any
+		check func(attribute.KeyValue)
+	}{
+		{"string", "value", func(kv attribute.KeyValue) {
+			if kv.Value.AsString() != "value" {
+				t.Fatalf("unexpected string value: %v", kv.Value)
+			}
+		}},
+		{"stringer", stringerStub{}, func(kv attribute.KeyValue) {
+			if kv.Value.AsString() != "stringer" {
+				t.Fatalf("unexpected stringer value: %v", kv.Value)
+			}
+		}},
+		{"error", fmt.Errorf("boom"), func(kv attribute.KeyValue) {
+			if kv.Value.AsString() != "boom" {
+				t.Fatalf("unexpected error string: %v", kv.Value)
+			}
+		}},
+		{"bool", true, func(kv attribute.KeyValue) {
+			if !kv.Value.AsBool() {
+				t.Fatalf("unexpected bool value: %v", kv.Value)
+			}
+		}},
+		{"int", int32(7), func(kv attribute.KeyValue) {
+			if kv.Value.AsInt64() != 7 {
+				t.Fatalf("unexpected int value: %v", kv.Value)
+			}
+		}},
+		{"uint", uint32(9), func(kv attribute.KeyValue) {
+			if kv.Value.AsInt64() != 9 {
+				t.Fatalf("unexpected uint value: %v", kv.Value)
+			}
+		}},
+		{"float", float32(1.5), func(kv attribute.KeyValue) {
+			if kv.Value.AsFloat64() != 1.5 {
+				t.Fatalf("unexpected float value: %v", kv.Value)
+			}
+		}},
+		{"bytes", []byte("abc"), func(kv attribute.KeyValue) {
+			if kv.Value.AsString() != "abc" {
+				t.Fatalf("unexpected bytes value: %v", kv.Value)
+			}
+		}},
+		{"nil", nil, func(kv attribute.KeyValue) {
+			if kv.Value.AsString() != "" {
+				t.Fatalf("expected empty string for nil, got %v", kv.Value)
+			}
+		}},
+		{"default", struct{ X int }{X: 5}, func(kv attribute.KeyValue) {
+			if kv.Value.AsString() == "" {
+				t.Fatalf("expected non-empty string for default value")
+			}
+		}},
+	}
+
+	for _, tc := range valueChecks {
+		kv, ok := attributeFromValue(tc.key, tc.value)
+		if !ok {
+			t.Fatalf("expected attribute for %s", tc.key)
+		}
+		if string(kv.Key) != tc.key {
+			t.Fatalf("unexpected key for %s: %s", tc.key, kv.Key)
+		}
+		tc.check(kv)
+	}
 }

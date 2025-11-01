@@ -16,14 +16,14 @@ import (
 )
 
 func TestMimirMetricsIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	targets := testintegration.DefaultTargets()
 	otlpEndpoint := targets.MetricsEndpoint
 	mimirBase := targets.MimirQueryURL
 	if err := testintegration.CheckReachable(ctx, mimirBase); err != nil {
-		t.Skipf("skipping: mimir unreachable at %s: %v", mimirBase, err)
+		t.Fatalf("mimir unreachable at %s: %v", mimirBase, err)
 	}
 
 	queueDir := t.TempDir()
@@ -51,7 +51,14 @@ func TestMimirMetricsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("meter setup: %v", err)
 	}
-	defer provider.Shutdown(context.Background())
+	shutdownComplete := false
+	t.Cleanup(func() {
+		if !shutdownComplete {
+			if err := provider.Shutdown(context.Background()); err != nil {
+				t.Errorf("cleanup meter shutdown: %v", err)
+			}
+		}
+	})
 
 	m := otel.Meter("goo11y/integration")
 	counter, err := m.Int64Counter(metricName)
@@ -69,6 +76,7 @@ func TestMimirMetricsIntegration(t *testing.T) {
 	if err := provider.Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown provider: %v", err)
 	}
+	shutdownComplete = true
 
 	if err := testintegration.WaitForEmptyDir(ctx, queueDir, 200*time.Millisecond); err != nil {
 		t.Fatalf("queue did not drain: %v", err)

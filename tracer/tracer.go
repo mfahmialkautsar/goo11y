@@ -21,6 +21,14 @@ type Provider struct {
 	provider *sdktrace.TracerProvider
 }
 
+// RegisterSpanProcessor attaches the supplied span processor to the underlying provider.
+func (p *Provider) RegisterSpanProcessor(processor sdktrace.SpanProcessor) {
+	if p == nil || p.provider == nil || processor == nil {
+		return
+	}
+	p.provider.RegisterSpanProcessor(processor)
+}
+
 // Setup initialises an OTLP tracer provider based on the provided configuration.
 // Supports both HTTP and gRPC protocols based on the Protocol config field.
 func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {

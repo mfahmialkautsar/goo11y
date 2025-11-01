@@ -83,6 +83,11 @@ func (c OTLPConfig) headerMap() map[string][]string {
 			if trimmedKey == "" || trimmedValue == "" {
 				continue
 			}
+			if existing, ok := headers[trimmedKey]; ok && len(existing) > 0 {
+				if strings.EqualFold(trimmedKey, "authorization") {
+					continue
+				}
+			}
 			headers[trimmedKey] = []string{trimmedValue}
 		}
 	}

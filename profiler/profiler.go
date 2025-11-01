@@ -65,7 +65,7 @@ func Setup(cfg Config) (*Controller, error) {
 
 // Stop flushes and terminates the profiler if it has been started.
 func (c *Controller) Stop() error {
-	if c == nil || c.profiler == nil {
+	if c.profiler == nil {
 		return nil
 	}
 	return c.profiler.Stop()

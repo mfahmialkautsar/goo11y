@@ -2,13 +2,17 @@ package persistenthttp
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mfahmialkautsar/goo11y/internal/spool"
 )
 
 func TestClientFlushesRequests(t *testing.T) {
@@ -118,5 +122,53 @@ func TestClientRetriesUntilSuccess(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected queue directory to be empty after success, found %d entries", len(entries))
+	}
+}
+
+func TestTransportWrapperNilRequest(t *testing.T) {
+	wrapper := &transportWrapper{}
+	if _, err := wrapper.RoundTrip(nil); err == nil || !strings.Contains(err.Error(), "nil request") {
+		t.Fatalf("expected nil request error, got %v", err)
+	}
+}
+
+type errReadCloser struct {
+	err error
+}
+
+func (e *errReadCloser) Read([]byte) (int, error) {
+	return 0, e.err
+}
+
+func (e *errReadCloser) Close() error {
+	return nil
+}
+
+func TestTransportWrapperReadError(t *testing.T) {
+	wrapper := &transportWrapper{}
+	req := httptest.NewRequest(http.MethodPost, "http://example.com", nil)
+	req.Body = &errReadCloser{err: errors.New("read failed")}
+
+	if _, err := wrapper.RoundTrip(req); err == nil || !strings.Contains(err.Error(), "read failed") {
+		t.Fatalf("expected read failure, got %v", err)
+	}
+}
+
+func TestTransportWrapperEnqueueError(t *testing.T) {
+	queueDir := t.TempDir()
+	queue, err := spool.New(queueDir)
+	if err != nil {
+		t.Fatalf("spool.New: %v", err)
+	}
+
+	if err := os.RemoveAll(queueDir); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+
+	wrapper := &transportWrapper{queue: queue}
+	req := httptest.NewRequest(http.MethodPost, "http://example.com", bytes.NewBufferString("payload"))
+
+	if _, err := wrapper.RoundTrip(req); err == nil || !strings.Contains(err.Error(), "spool") {
+		t.Fatalf("expected enqueue error, got %v", err)
 	}
 }

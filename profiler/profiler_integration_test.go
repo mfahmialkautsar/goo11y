@@ -13,14 +13,14 @@ import (
 var cpuSink float64
 
 func TestPyroscopeProfilingIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	targets := testintegration.DefaultTargets()
 	pyroscopeBase := targets.PyroscopeURL
 	tenantID := targets.PyroscopeTenant
 	if err := testintegration.CheckReachable(ctx, pyroscopeBase); err != nil {
-		t.Skipf("skipping: pyroscope unreachable at %s: %v", pyroscopeBase, err)
+		t.Fatalf("pyroscope unreachable at %s: %v", pyroscopeBase, err)
 	}
 
 	serviceName := fmt.Sprintf("goo11y-it-profiler-%d.cpu", time.Now().UnixNano())
@@ -44,7 +44,9 @@ func TestPyroscopeProfilingIntegration(t *testing.T) {
 	stopped := false
 	t.Cleanup(func() {
 		if !stopped {
-			_ = controller.Stop()
+			if err := controller.Stop(); err != nil {
+				t.Errorf("cleanup profiler stop: %v", err)
+			}
 		}
 	})
 

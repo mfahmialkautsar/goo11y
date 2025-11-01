@@ -16,14 +16,14 @@ import (
 )
 
 func TestTempoTracingIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	targets := testintegration.DefaultTargets()
 	otlpEndpoint := targets.TracesEndpoint
 	tempoBase := targets.TempoQueryURL
 	if err := testintegration.CheckReachable(ctx, tempoBase); err != nil {
-		t.Skipf("skipping: tempo unreachable at %s: %v", tempoBase, err)
+		t.Fatalf("tempo unreachable at %s: %v", tempoBase, err)
 	}
 
 	queueDir := t.TempDir()
@@ -51,7 +51,13 @@ func TestTempoTracingIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tracer setup: %v", err)
 	}
-	defer provider.Shutdown(context.Background())
+	t.Cleanup(func() {
+		if provider != nil {
+			if err := provider.Shutdown(context.Background()); err != nil {
+				t.Errorf("cleanup tracer shutdown: %v", err)
+			}
+		}
+	})
 
 	tracer := otel.Tracer("goo11y/integration")
 	spanCtx, span := tracer.Start(ctx, "integration-span", trace.WithAttributes(attribute.String("test_case", labelValue)))
@@ -68,6 +74,7 @@ func TestTempoTracingIntegration(t *testing.T) {
 	if err := provider.Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown provider: %v", err)
 	}
+	provider = nil
 
 	if err := testintegration.WaitForEmptyDir(ctx, queueDir, 200*time.Millisecond); err != nil {
 		t.Fatalf("queue did not drain: %v", err)

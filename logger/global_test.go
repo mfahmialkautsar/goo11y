@@ -250,3 +250,22 @@ func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
 		t.Fatalf("unexpected foo: %v", entry["foo"])
 	}
 }
+
+func TestGlobalInitializesWhenUnconfigured(t *testing.T) {
+	globalLogger.Store(nil)
+	t.Cleanup(func() { Use(nil) })
+
+	log := Global()
+	if log == nil {
+		t.Fatal("expected global logger instance")
+	}
+
+	if _, ok := log.(noopLogger); !ok {
+		t.Fatalf("expected noopLogger, got %T", log)
+	}
+
+	holder := globalLogger.Load()
+	if holder == nil || holder.logger == nil {
+		t.Fatal("expected global holder to store logger")
+	}
+}
