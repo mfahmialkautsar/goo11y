@@ -7,7 +7,6 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/mfahmialkautsar/goo11y/auth"
 	"github.com/mfahmialkautsar/goo11y/internal/fileutil"
-	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 )
 
 // Config governs metric provider setup.
@@ -16,10 +15,10 @@ type Config struct {
 	Enabled        bool
 	Endpoint       string `validate:"required_if=Enabled true"`
 	Insecure       bool
-	Protocol       otlputil.Protocol `default:"http" validate:"oneof=http grpc"`
-	UseSpool       bool              `default:"true"`
-	ServiceName    string            `validate:"required_if=Enabled true"`
-	ExportInterval time.Duration     `default:"10s" validate:"gt=0"`
+	Exporter       string        `default:"http" validate:"oneof=http grpc"`
+	UseSpool       bool          `default:"true"`
+	ServiceName    string        `validate:"required_if=Enabled true"`
+	ExportInterval time.Duration `default:"10s" validate:"gt=0"`
 	QueueDir       string
 	Runtime        RuntimeConfig
 	Credentials    auth.Credentials

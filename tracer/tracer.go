@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -26,7 +27,7 @@ func (p *Provider) RegisterSpanProcessor(processor sdktrace.SpanProcessor) {
 }
 
 // Setup initialises an OTLP tracer provider based on the provided configuration.
-// Supports both HTTP and gRPC protocols based on the Protocol config field.
+// Selects HTTP or gRPC exporters based on the Exporter config field.
 func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {
 	cfg = cfg.ApplyDefaults()
 
@@ -45,13 +46,13 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 
 	var exporter sdktrace.SpanExporter
 
-	switch cfg.Protocol {
-	case otlputil.ProtocolGRPC:
+	switch cfg.Exporter {
+	case constant.ExporterGRPC:
 		exporter, err = setupGRPCExporter(ctx, cfg, baseURL)
-	case otlputil.ProtocolHTTP:
+	case constant.ExporterHTTP:
 		exporter, err = setupHTTPExporter(ctx, cfg, baseURL)
 	default:
-		return nil, fmt.Errorf("tracer: unsupported protocol %s", cfg.Protocol)
+		return nil, fmt.Errorf("tracer: unsupported exporter %s", cfg.Exporter)
 	}
 
 	if err != nil {
