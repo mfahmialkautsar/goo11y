@@ -138,6 +138,8 @@ func TestQueueProcessesPersistedEntries(t *testing.T) {
 		t.Fatalf("timed out waiting for persisted payload: %v", ctx.Err())
 	}
 
+	time.Sleep(10 * time.Millisecond)
+
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)

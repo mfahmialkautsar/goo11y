@@ -23,17 +23,34 @@ const (
 	initialBackoff   = time.Second
 	maxBackoff       = time.Minute
 	queueFilePattern = "%020d-%06d.spool"
+	maxFileAge       = time.Minute
+	maxBufferFiles   = 1000
 )
 
 type Handler func(context.Context, []byte) error
 
+type ErrorLogger interface {
+	Log(error)
+}
+
+type ErrorLoggerFunc func(error)
+
+func (f ErrorLoggerFunc) Log(err error) {
+	f(err)
+}
+
 type Queue struct {
-	dir     string
-	notify  chan struct{}
-	counter uint64
+	dir         string
+	notify      chan struct{}
+	counter     uint64
+	errorLogger ErrorLogger
 }
 
 func New(dir string) (*Queue, error) {
+	return NewWithErrorLogger(dir, nil)
+}
+
+func NewWithErrorLogger(dir string, logger ErrorLogger) (*Queue, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("spool: queue dir is required")
 	}
@@ -63,8 +80,9 @@ func New(dir string) (*Queue, error) {
 	}
 
 	return &Queue{
-		dir:    cleaned,
-		notify: make(chan struct{}, notifierBuffer),
+		dir:         cleaned,
+		notify:      make(chan struct{}, notifierBuffer),
+		errorLogger: logger,
 	}, nil
 }
 
@@ -72,6 +90,12 @@ func (q *Queue) Enqueue(payload []byte) (string, error) {
 	if len(payload) == 0 {
 		return "", fmt.Errorf("spool: empty payload")
 	}
+
+	// Clean old files if buffer exceeds threshold
+	if err := q.cleanOldFiles(); err != nil {
+		q.logError(fmt.Errorf("spool: cleanup warning: %w", err))
+	}
+
 	seq := atomic.AddUint64(&q.counter, 1)
 	name := fmt.Sprintf(queueFilePattern, time.Now().UnixNano(), seq%1_000_000)
 	path := filepath.Join(q.dir, name)
@@ -126,6 +150,7 @@ func (q *Queue) loop(ctx context.Context, handler Handler) {
 				backoff = initialBackoff
 				continue
 			}
+			q.logError(fmt.Errorf("spool: fetch next: %w", err))
 			if !q.waitWithBackoff(ctx, backoff) {
 				return
 			}
@@ -135,10 +160,12 @@ func (q *Queue) loop(ctx context.Context, handler Handler) {
 
 		if err := handler(ctx, payload); err != nil {
 			if errors.Is(err, ErrCorrupt) {
+				q.logError(fmt.Errorf("spool: corrupt payload in %s: %w", token, err))
 				_ = q.Complete(token)
 				backoff = initialBackoff
 				continue
 			}
+			q.logError(fmt.Errorf("spool: handler failed for %s: %w", token, err))
 			if !q.waitWithBackoff(ctx, backoff) {
 				return
 			}
@@ -148,6 +175,12 @@ func (q *Queue) loop(ctx context.Context, handler Handler) {
 
 		_ = q.Complete(token)
 		backoff = initialBackoff
+	}
+}
+
+func (q *Queue) logError(err error) {
+	if q.errorLogger != nil {
+		q.errorLogger.Log(err)
 	}
 }
 
@@ -221,4 +254,53 @@ func (q *Queue) signal() {
 	case q.notify <- struct{}{}:
 	default:
 	}
+}
+
+// cleanOldFiles removes spool files older than maxFileAge when buffer exceeds maxBufferFiles
+func (q *Queue) cleanOldFiles() error {
+	entries, err := os.ReadDir(q.dir)
+	if err != nil {
+		return fmt.Errorf("read dir: %w", err)
+	}
+
+	// Count spool files
+	var spoolFiles []fs.DirEntry
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".spool") {
+			continue
+		}
+		spoolFiles = append(spoolFiles, entry)
+	}
+
+	// Only clean if buffer exceeds threshold
+	if len(spoolFiles) <= maxBufferFiles {
+		return nil
+	}
+
+	now := time.Now()
+	cutoff := now.Add(-maxFileAge)
+	removed := 0
+
+	for _, entry := range spoolFiles {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		// Remove if older than 1 minute
+		if info.ModTime().Before(cutoff) {
+			path := filepath.Join(q.dir, entry.Name())
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				q.logError(fmt.Errorf("remove old file %s: %w", entry.Name(), err))
+			} else {
+				removed++
+			}
+		}
+	}
+
+	if removed > 0 {
+		q.logError(fmt.Errorf("cleaned %d old spool files (buffer: %d, threshold: %d)", removed, len(spoolFiles), maxBufferFiles))
+	}
+
+	return nil
 }

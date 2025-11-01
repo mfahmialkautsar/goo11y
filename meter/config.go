@@ -1,23 +1,25 @@
 package meter
 
 import (
-	"errors"
-	"strings"
 	"time"
 
+	"github.com/creasty/defaults"
+	"github.com/go-playground/validator/v10"
 	"github.com/mfahmialkautsar/goo11y/auth"
 	"github.com/mfahmialkautsar/goo11y/internal/fileutil"
+	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 )
 
-const defaultExportInterval = 10 * time.Second
-
 // Config governs metric provider setup.
+// Endpoint should be host:port only (no scheme, no path). Scheme determined by Insecure flag.
 type Config struct {
 	Enabled        bool
-	Endpoint       string
+	Endpoint       string `validate:"required_if=Enabled true"`
 	Insecure       bool
-	ServiceName    string
-	ExportInterval time.Duration
+	Protocol       otlputil.Protocol `default:"http" validate:"oneof=http grpc"`
+	UseSpool       bool              `default:"true"`
+	ServiceName    string            `validate:"required_if=Enabled true"`
+	ExportInterval time.Duration     `default:"10s" validate:"gt=0"`
 	QueueDir       string
 	Runtime        RuntimeConfig
 	Credentials    auth.Credentials
@@ -30,14 +32,9 @@ type RuntimeConfig struct {
 }
 
 func (c Config) withDefaults() Config {
-	if c.ExportInterval <= 0 {
-		c.ExportInterval = defaultExportInterval
-	}
+	_ = defaults.Set(&c)
 	if c.QueueDir == "" {
 		c.QueueDir = fileutil.DefaultQueueDir("metrics")
-	}
-	if !c.Enabled && strings.TrimSpace(c.Endpoint) != "" {
-		c.Enabled = true
 	}
 	return c
 }
@@ -49,14 +46,6 @@ func (c Config) ApplyDefaults() Config {
 
 // Validate ensures the configuration is complete when metrics are enabled.
 func (c Config) Validate() error {
-	if !c.Enabled {
-		return nil
-	}
-	if c.ServiceName == "" {
-		return errors.New("meter service_name is required")
-	}
-	if c.Endpoint == "" {
-		return errors.New("meter endpoint is required")
-	}
-	return nil
+	configValidator := validator.New(validator.WithRequiredStructEnabled())
+	return configValidator.Struct(c)
 }

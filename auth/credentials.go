@@ -5,15 +5,13 @@ import (
 	"strings"
 )
 
-const defaultAPIKeyHeader = "X-API-Key"
-
 // Credentials captures optional authentication material for HTTP-based telemetry exporters.
 type Credentials struct {
 	BasicUsername string
 	BasicPassword string
 	BearerToken   string
 	APIKey        string
-	APIKeyHeader  string
+	APIKeyHeader  string `default:"X-API-Key"`
 	Headers       map[string]string
 }
 
@@ -36,11 +34,7 @@ func (c Credentials) HeaderMap() map[string]string {
 	headers := c.extraHeaders()
 
 	if c.APIKey != "" {
-		key := c.APIKeyHeader
-		if key == "" {
-			key = defaultAPIKeyHeader
-		}
-		headers[key] = c.APIKey
+		headers[c.APIKeyHeader] = c.APIKey
 	}
 
 	switch {

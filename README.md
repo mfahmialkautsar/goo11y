@@ -15,7 +15,11 @@ Goo11y is a batteries-included observability bundle for Go services. It configur
 ## Features
 
 - Zerolog-based structured logger with automatic OpenTelemetry trace and span correlation, optional OTLP export, console/file writers, and credential injection.
-- OTLP trace and metric pipelines with disk-backed queues (`$XDG_CACHE_HOME/goo11y/<signal>`) for guaranteed delivery across process restarts.
+- **Multi-protocol OTLP support**: HTTP/HTTPS and gRPC protocols via explicit configuration.
+- OTLP trace and metric pipelines with optional disk-backed queues (`$XDG_CACHE_HOME/goo11y/<signal>`) for guaranteed delivery across process restarts.
+- **Flexible delivery modes**: Choose between spooled (disk queue) or direct HTTP, async (fire-and-forget) or sync (blocking) per signal.
+- **Error logging**: All spool errors are logged so you know when delivery fails.
+- **Normalized endpoints**: Supply endpoints with or without schemes (`http://`, `https://`) or trailing paths — the library normalizes them correctly.
 - Runtime metric instrumentation (GC, goroutines, process stats) toggled per deployment.
 - Continuous profiler controller with Pyroscope-compatible export and coordinated service naming.
 - Shared resource builder that merges semantic conventions, environment attributes, custom detectors, and caller-provided overrides.
@@ -56,16 +60,20 @@ func main() {
 			Level:    "info",
 			Console:  false,
 			OTLP: logger.OTLPConfig{
-				Endpoint: "https://otlp.example.com/v1/logs",
+				Endpoint: "otlp.example.com",
+				UseSpool: true,
+				Async:    true,
 			},
 		},
 		Tracer: tracer.Config{
 			Enabled:  true,
-			Endpoint: "https://otlp.example.com/v1/traces",
+			Endpoint: "otlp.example.com",
+			UseSpool: true,
 		},
 		Meter: meter.Config{
 			Enabled: true,
-			Endpoint: "https://otlp.example.com/v1/metrics",
+			Endpoint: "otlp.example.com",
+			UseSpool: true,
 			Runtime: meter.RuntimeConfig{Enabled: true},
 		},
 		Profiler: profiler.Config{Enabled: true},
@@ -98,16 +106,52 @@ type Config struct {
 ```
 
 - **Resource** (`goo11y.ResourceConfig`): `ServiceName` is required. Optional fields add version, namespace, arbitrary attributes, detectors, override factory, and customizers.
-- **Logger** (`logger.Config`): Enable OTLP/HTTP export with disk queues, daily file rotation, console output in non-production, and credential-backed headers. `UseGlobal` promotes the logger via `logger.Init`.
-- **Tracer** (`tracer.Config`): Configures an OTLP exporter, sampling ratio, persistent queue location, and `UseGlobal` for `otel.SetTracerProvider`.
-- **Meter** (`meter.Config`): Sets OTLP metrics export, runtime instrumentation (`goroutine`, `memory`, `cpu`, `build`), and `UseGlobal` for `otel.SetMeterProvider`.
+- **Logger** (`logger.Config`): Enable OTLP/HTTP export with optional disk queues (`UseSpool: true`, default), sync/async delivery (`Async: true`, default), daily file rotation, console output in non-production, and credential-backed headers. Endpoints are normalized (scheme optional). Only HTTP/HTTPS protocols supported. `UseGlobal` promotes the logger via `logger.Init`.
+- **Tracer** (`tracer.Config`): Configures an OTLP exporter supporting HTTP and gRPC protocols (explicit `Protocol` field), sampling ratio, optional persistent queue (`UseSpool: true`, default), and `UseGlobal` for `otel.SetTracerProvider`. Endpoints are normalized automatically.
+- **Meter** (`meter.Config`): Sets OTLP metrics export supporting HTTP and gRPC protocols (explicit `Protocol` field), optional spooling (`UseSpool: true`, default), runtime instrumentation (`goroutine`, `memory`, `cpu`, `build`), and `UseGlobal` for `otel.SetMeterProvider`. Endpoints are normalized automatically.
 - **Profiler** (`profiler.Config`): Integrates continuous profiling with flamegraph export, including optional authentication and service metadata alignment.
 
 Credentials implement `auth.Credentials` and merge into OTLP headers for every signal, avoiding manual authorization plumbing.
 
+### Protocol Support
+
+Tracer and Meter support HTTP and gRPC via explicit `Protocol` field:
+
+```go
+import "github.com/mfahmialkautsar/goo11y/internal/otlputil"
+
+Tracer: tracer.Config{
+	Endpoint: "otlp.example.com",
+	Protocol: otlputil.ProtocolHTTP, // or otlputil.ProtocolGRPC
+}
+```
+
+Logger only supports HTTP/HTTPS.
+
+### Delivery Modes
+
+Each signal supports flexible delivery:
+
+- **UseSpool** (default: `true`): Write to disk queue for guaranteed delivery and automatic retry with exponential backoff. Set to `false` for direct HTTP.
+- **Async** (logger only, default: `true`): Fire-and-forget writes. Set to `false` for blocking synchronous delivery.
+
+Example for low-latency synchronous delivery without spooling:
+
+```go
+Logger: logger.Config{
+	OTLP: logger.OTLPConfig{
+		Endpoint: "otlp.example.com",
+		UseSpool: false,
+		Async:    false,
+	},
+},
+```
+
 ## Persistent Delivery
 
-All network emitters share the same persistent spooler, writing batches to the user's cache directory (`os.UserCacheDir()/goo11y/<signal>`). Failed requests are retried with exponential backoff, protecting telemetry during outages or restarts.
+When `UseSpool: true` (default), all network emitters use a persistent disk queue, writing batches to the user's cache directory (`os.UserCacheDir()/goo11y/<signal>`). Failed requests are retried with exponential backoff (1s → 1min max), protecting telemetry during outages or restarts. All spool errors are logged for visibility.
+
+Set `UseSpool: false` to bypass the queue and send directly via HTTP. For the logger, combine with `Async: false` for fully synchronous blocking delivery.
 
 ## Testing
 

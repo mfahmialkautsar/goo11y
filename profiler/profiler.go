@@ -12,14 +12,16 @@ type Controller struct {
 	profiler *pyroscope.Profiler
 }
 
-// Setup starts the profiler according to the provided configuration.
+// Setup initializes a pyroscope profiler and starts profiling if enabled.
 func Setup(cfg Config) (*Controller, error) {
-	cfg = cfg.withDefaults()
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
+	cfg = cfg.ApplyDefaults()
+
 	if !cfg.Enabled {
 		return &Controller{}, nil
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("profiler config: %w", err)
 	}
 
 	headers, user, pass, hasBasic := cfg.preparedCredentials()

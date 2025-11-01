@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -19,23 +20,38 @@ type otlpWriter struct {
 	endpoint      string
 	headers       map[string][]string
 	queue         *spool.Queue
+	client        *http.Client
 	resourceAttrs []otlpKeyValue
+	async         bool
 }
 
 func newOTLPWriter(cfg OTLPConfig, serviceName, environment string) (io.Writer, error) {
+	// Preserve user's endpoint, only add scheme if missing
 	endpoint := strings.TrimSpace(cfg.Endpoint)
-	endpoint = strings.TrimRight(endpoint, "/")
 	if endpoint == "" {
 		return nil, fmt.Errorf("otlp: endpoint is required")
 	}
-	lower := strings.ToLower(endpoint)
-	if !strings.HasSuffix(lower, "/otlp/v1/logs") {
-		endpoint += "/otlp/v1/logs"
-	}
 
-	queue, err := spool.New(cfg.QueueDir)
-	if err != nil {
-		return nil, err
+	// Add scheme only if missing
+	if !strings.Contains(endpoint, "://") {
+		if cfg.Insecure {
+			endpoint = "http://" + endpoint
+		} else {
+			endpoint = "https://" + endpoint
+		}
+	}
+	// If user provided a scheme, use it as-is (don't override)
+
+	var queue *spool.Queue
+	var err error
+	if cfg.UseSpool {
+		queue, err = spool.NewWithErrorLogger(cfg.QueueDir, spool.ErrorLoggerFunc(func(err error) {
+			// Print spool errors to stderr for visibility during tests
+			_, _ = fmt.Fprintf(os.Stderr, "[otlp-spool] %v\n", err)
+		}))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	transport := configureTransport(cfg.Insecure)
@@ -43,7 +59,10 @@ func newOTLPWriter(cfg OTLPConfig, serviceName, environment string) (io.Writer, 
 		Timeout:   cfg.Timeout,
 		Transport: transport,
 	}
-	queue.Start(context.Background(), spool.HTTPHandler(client))
+
+	if cfg.UseSpool {
+		queue.Start(context.Background(), spool.HTTPHandler(client))
+	}
 
 	headers := cfg.headerMap()
 
@@ -65,7 +84,9 @@ func newOTLPWriter(cfg OTLPConfig, serviceName, environment string) (io.Writer, 
 		endpoint:      endpoint,
 		headers:       headers,
 		queue:         queue,
+		client:        client,
 		resourceAttrs: resourceAttrs,
+		async:         cfg.Async,
 	}, nil
 }
 
@@ -78,23 +99,59 @@ func (ow *otlpWriter) Write(p []byte) (int, error) {
 		return 0, err
 	}
 
-	request := &spool.HTTPRequest{
-		Method: http.MethodPost,
-		URL:    ow.endpoint,
-		Header: copyHeaders(ow.headers),
-		Body:   payload,
+	if ow.queue != nil {
+		request := &spool.HTTPRequest{
+			Method: http.MethodPost,
+			URL:    ow.endpoint,
+			Header: copyHeaders(ow.headers),
+			Body:   payload,
+		}
+
+		envelope, err := request.Marshal()
+		if err != nil {
+			return 0, err
+		}
+
+		if _, err := ow.queue.Enqueue(envelope); err != nil {
+			return 0, err
+		}
+		ow.queue.Notify()
+		return len(p), nil
 	}
 
-	envelope, err := request.Marshal()
+	if ow.async {
+		go ow.sendSync(payload)
+		return len(p), nil
+	}
+
+	return len(p), ow.sendSync(payload)
+}
+
+func (ow *otlpWriter) sendSync(payload []byte) error {
+	req, err := http.NewRequest(http.MethodPost, ow.endpoint, strings.NewReader(string(payload)))
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("otlp: create request: %w", err)
 	}
 
-	if _, err := ow.queue.Enqueue(envelope); err != nil {
-		return 0, err
+	for key, values := range ow.headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
 	}
-	ow.queue.Notify()
-	return len(p), nil
+
+	resp, err := ow.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("otlp: send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("otlp: remote status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 func (ow *otlpWriter) buildPayload(entry []byte) ([]byte, error) {

@@ -69,10 +69,12 @@ var noopTraceProvider = TraceProviderFunc(func(context.Context) (TraceContext, b
 
 // New constructs a Zerolog-backed logger based on the provided configuration.
 func New(cfg Config) (Logger, error) {
-	cfg = cfg.withDefaults()
+	cfg = cfg.ApplyDefaults()
+
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("logger config: %w", err)
 	}
+
 	if !cfg.Enabled {
 		return nil, nil
 	}

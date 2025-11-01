@@ -12,7 +12,9 @@ import (
 )
 
 func NewClient(queueDir string, timeout time.Duration) (*http.Client, error) {
-	queue, err := spool.New(queueDir)
+	queue, err := spool.NewWithErrorLogger(queueDir, spool.ErrorLoggerFunc(func(err error) {
+		fmt.Fprintf(io.Discard, "persistenthttp spool error: %v\n", err)
+	}))
 	if err != nil {
 		return nil, err
 	}

@@ -2,18 +2,14 @@ package goo11y
 
 import (
 	"context"
-	"errors"
 
+	"github.com/creasty/defaults"
+	"github.com/go-playground/validator/v10"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/meter"
 	"github.com/mfahmialkautsar/goo11y/profiler"
 	"github.com/mfahmialkautsar/goo11y/tracer"
 	"go.opentelemetry.io/otel/sdk/resource"
-)
-
-const (
-	defaultServiceVersion   = "0.1.0"
-	defaultServiceNamespace = "default"
 )
 
 // Config holds the top-level observability configuration spanning all instrumentations.
@@ -28,9 +24,9 @@ type Config struct {
 
 // ResourceConfig describes service identity attributes propagated to telemetry backends.
 type ResourceConfig struct {
-	ServiceName      string
-	ServiceVersion   string
-	ServiceNamespace string
+	ServiceName      string `validate:"required"`
+	ServiceVersion   string `default:"0.1.0"`
+	ServiceNamespace string `default:"default"`
 	Environment      string
 	Attributes       map[string]string
 	Detectors        []resource.Detector
@@ -58,12 +54,8 @@ func (f ResourceCustomizerFunc) Customize(ctx context.Context, res *resource.Res
 }
 
 func (c *Config) applyDefaults() {
-	if c.Resource.ServiceVersion == "" {
-		c.Resource.ServiceVersion = defaultServiceVersion
-	}
-	if c.Resource.ServiceNamespace == "" {
-		c.Resource.ServiceNamespace = defaultServiceNamespace
-	}
+	_ = defaults.Set(c)
+
 	if c.Logger.ServiceName == "" {
 		c.Logger.ServiceName = c.Resource.ServiceName
 	}
@@ -76,28 +68,9 @@ func (c *Config) applyDefaults() {
 	if c.Profiler.ServiceName == "" {
 		c.Profiler.ServiceName = c.Resource.ServiceName
 	}
-
-	c.Logger = c.Logger.ApplyDefaults()
-	c.Tracer = c.Tracer.ApplyDefaults()
-	c.Meter = c.Meter.ApplyDefaults()
-	c.Profiler = c.Profiler.ApplyDefaults()
 }
 
 func (c Config) validate() error {
-	if c.Resource.ServiceName == "" {
-		return errors.New("resource.service_name is required")
-	}
-	if err := c.Logger.ApplyDefaults().Validate(); err != nil {
-		return err
-	}
-	if err := c.Tracer.ApplyDefaults().Validate(); err != nil {
-		return err
-	}
-	if err := c.Meter.ApplyDefaults().Validate(); err != nil {
-		return err
-	}
-	if err := c.Profiler.ApplyDefaults().Validate(); err != nil {
-		return err
-	}
-	return nil
+	configValidator := validator.New(validator.WithRequiredStructEnabled())
+	return configValidator.Struct(c)
 }

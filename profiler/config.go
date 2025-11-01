@@ -1,31 +1,27 @@
 package profiler
 
 import (
-	"errors"
-	"strings"
-
+	"github.com/creasty/defaults"
+	"github.com/go-playground/validator/v10"
 	"github.com/mfahmialkautsar/goo11y/auth"
 )
 
-const (
-	defaultMutexProfileFraction = 5
-	defaultBlockProfileRate     = 5
-)
-
 // Config governs pyroscope profiler setup.
+// ServerURL should be a full URL (scheme + host + port + optional path).
 type Config struct {
 	Enabled              bool
-	ServerURL            string
-	ServiceName          string
+	ServerURL            string `validate:"required_if=Enabled true"`
+	ServiceName          string `validate:"required_if=Enabled true"`
 	Tags                 map[string]string
-	TenantID             string
-	MutexProfileFraction int
-	BlockProfileRate     int
+	TenantID             string `default:"anonymous"`
+	MutexProfileFraction int    `default:"5" validate:"gte=0"`
+	BlockProfileRate     int    `default:"5" validate:"gte=0"`
 	Credentials          auth.Credentials
 	UseGlobal            bool
 }
 
 func (c Config) withDefaults() Config {
+	_ = defaults.Set(&c)
 	if c.Tags == nil {
 		c.Tags = make(map[string]string)
 	}
@@ -36,18 +32,6 @@ func (c Config) withDefaults() Config {
 		if _, ok := c.Tags["service_name"]; !ok {
 			c.Tags["service_name"] = c.ServiceName
 		}
-	}
-	if c.TenantID == "" {
-		c.TenantID = "anonymous"
-	}
-	if c.MutexProfileFraction <= 0 {
-		c.MutexProfileFraction = defaultMutexProfileFraction
-	}
-	if c.BlockProfileRate <= 0 {
-		c.BlockProfileRate = defaultBlockProfileRate
-	}
-	if !c.Enabled && strings.TrimSpace(c.ServerURL) != "" {
-		c.Enabled = true
 	}
 	return c
 }
@@ -68,14 +52,6 @@ func (c Config) preparedCredentials() (map[string]string, string, string, bool) 
 
 // Validate ensures the profiler configuration is complete when profiling is enabled.
 func (c Config) Validate() error {
-	if !c.Enabled {
-		return nil
-	}
-	if c.ServiceName == "" {
-		return errors.New("profiler service_name is required")
-	}
-	if c.ServerURL == "" {
-		return errors.New("profiler server_url is required")
-	}
-	return nil
+	configValidator := validator.New(validator.WithRequiredStructEnabled())
+	return configValidator.Struct(c)
 }

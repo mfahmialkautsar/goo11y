@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/credentials"
 )
 
 // Provider wraps the SDK tracer provider to expose a narrow API.
@@ -18,37 +21,37 @@ type Provider struct {
 	provider *sdktrace.TracerProvider
 }
 
-// Setup initialises an OTLP/HTTP tracer provider based on the provided configuration.
+// Setup initialises an OTLP tracer provider based on the provided configuration.
+// Supports both HTTP and gRPC protocols based on the Protocol config field.
 func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {
-	cfg = cfg.withDefaults()
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
+	cfg = cfg.ApplyDefaults()
+
 	if !cfg.Enabled {
 		return &Provider{}, nil
 	}
 
-	opts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(cfg.Endpoint),
-		otlptracehttp.WithTimeout(cfg.ExportTimeout),
-	}
-	if cfg.Insecure {
-		opts = append(opts, otlptracehttp.WithInsecure())
-	}
-	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
-		opts = append(opts, otlptracehttp.WithHeaders(headers))
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("tracer config: %w", err)
 	}
 
-	client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportTimeout)
+	baseURL, err := otlputil.NormalizeBaseURL(cfg.Endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("create trace client: %w", err)
+		return nil, fmt.Errorf("tracer: %w", err)
 	}
-	opts = append(opts, otlptracehttp.WithHTTPClient(client))
-	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true}))
 
-	exporter, err := otlptracehttp.New(ctx, opts...)
+	var exporter sdktrace.SpanExporter
+
+	switch cfg.Protocol {
+	case otlputil.ProtocolGRPC:
+		exporter, err = setupGRPCExporter(ctx, cfg, baseURL)
+	case otlputil.ProtocolHTTP:
+		exporter, err = setupHTTPExporter(ctx, cfg, baseURL)
+	default:
+		return nil, fmt.Errorf("tracer: unsupported protocol %s", cfg.Protocol)
+	}
+
 	if err != nil {
-		return nil, fmt.Errorf("create trace exporter: %w", err)
+		return nil, err
 	}
 
 	sam := samplerFromRatio(cfg.SampleRatio)
@@ -68,6 +71,54 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	)
 
 	return &Provider{provider: tp}, nil
+}
+
+func setupHTTPExporter(ctx context.Context, cfg Config, baseURL string) (sdktrace.SpanExporter, error) {
+	opts := []otlptracehttp.Option{
+		otlptracehttp.WithEndpoint(baseURL),
+		otlptracehttp.WithTimeout(cfg.ExportTimeout),
+		otlptracehttp.WithURLPath("/v1/traces"),
+	}
+
+	if cfg.Insecure {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
+
+	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
+		opts = append(opts, otlptracehttp.WithHeaders(headers))
+	}
+
+	if cfg.UseSpool {
+		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("create trace client: %w", err)
+		}
+		opts = append(opts, otlptracehttp.WithHTTPClient(client))
+	}
+	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true}))
+
+	return otlptracehttp.New(ctx, opts...)
+}
+
+func setupGRPCExporter(ctx context.Context, cfg Config, baseURL string) (sdktrace.SpanExporter, error) {
+	opts := []otlptracegrpc.Option{
+		otlptracegrpc.WithEndpoint(baseURL),
+		otlptracegrpc.WithTimeout(cfg.ExportTimeout),
+	}
+
+	if cfg.Insecure {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	} else {
+		opts = append(opts, otlptracegrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))
+	}
+
+	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
+		opts = append(opts, otlptracegrpc.WithHeaders(headers))
+	}
+
+	opts = append(opts, otlptracegrpc.WithRetry(otlptracegrpc.RetryConfig{Enabled: true}))
+
+	return otlptracegrpc.New(ctx, opts...)
 }
 
 // SpanContext extracts the span context from the provided request context.
