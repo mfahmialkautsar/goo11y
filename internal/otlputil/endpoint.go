@@ -16,7 +16,6 @@ func NormalizeBaseURL(endpoint string) (string, error) {
 		return "", fmt.Errorf("endpoint is empty")
 	}
 
-	// Add scheme if missing for parsing
 	if !strings.Contains(endpoint, "://") {
 		endpoint = "https://" + endpoint
 	}

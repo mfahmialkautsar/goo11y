@@ -90,8 +90,6 @@ func (q *Queue) Enqueue(payload []byte) (string, error) {
 	if len(payload) == 0 {
 		return "", fmt.Errorf("spool: empty payload")
 	}
-
-	// Clean old files if buffer exceeds threshold
 	if err := q.cleanOldFiles(); err != nil {
 		q.logError(fmt.Errorf("spool: cleanup warning: %w", err))
 	}
@@ -256,14 +254,12 @@ func (q *Queue) signal() {
 	}
 }
 
-// cleanOldFiles removes spool files older than maxFileAge when buffer exceeds maxBufferFiles
+// cleanOldFiles enforces retention limits when the queue exceeds the buffered file threshold.
 func (q *Queue) cleanOldFiles() error {
 	entries, err := os.ReadDir(q.dir)
 	if err != nil {
 		return fmt.Errorf("read dir: %w", err)
 	}
-
-	// Count spool files
 	var spoolFiles []fs.DirEntry
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".spool") {
@@ -271,8 +267,6 @@ func (q *Queue) cleanOldFiles() error {
 		}
 		spoolFiles = append(spoolFiles, entry)
 	}
-
-	// Only clean if buffer exceeds threshold
 	if len(spoolFiles) <= maxBufferFiles {
 		return nil
 	}
@@ -286,8 +280,6 @@ func (q *Queue) cleanOldFiles() error {
 		if err != nil {
 			continue
 		}
-
-		// Remove if older than 1 minute
 		if info.ModTime().Before(cutoff) {
 			path := filepath.Join(q.dir, entry.Name())
 			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {

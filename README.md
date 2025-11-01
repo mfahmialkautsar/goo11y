@@ -10,20 +10,17 @@
 [![Fuzzing Status](https://github.com/mfahmialkautsar/goo11y/actions/workflows/fuzz.yml/badge.svg)](https://github.com/mfahmialkautsar/goo11y/actions/workflows/fuzz.yml)
 [![License](https://img.shields.io/github/license/mfahmialkautsar/goo11y.svg)](LICENSE)
 
-Goo11y is a batteries-included observability bundle for Go services. It configures structured logging, tracing, metrics, and profiling with consistent service metadata, persistent delivery guarantees, and opt-in global registration.
+Goo11y is a focused initializer that wires OpenTelemetry tracing, metrics, and Pyroscope profiling alongside a Zerolog-based structured logger. It standardizes resource metadata, credentials, endpoint normalization, and persistent delivery so that application code can keep using the upstream OpenTelemetry APIs directly.
 
-## Features
+## What Goo11y Provides
 
-- Zerolog-based structured logger with automatic OpenTelemetry trace and span correlation, optional OTLP export, console/file writers, and credential injection.
-- **Multi-protocol OTLP support**: HTTP/HTTPS and gRPC protocols via explicit configuration.
-- OTLP trace and metric pipelines with optional disk-backed queues (`$XDG_CACHE_HOME/goo11y/<signal>`) for guaranteed delivery across process restarts.
-- **Flexible delivery modes**: Choose between spooled (disk queue) or direct HTTP, async (fire-and-forget) or sync (blocking) per signal.
-- **Error logging**: All spool errors are logged so you know when delivery fails.
-- **Normalized endpoints**: Supply endpoints with or without schemes (`http://`, `https://`) or trailing paths — the library normalizes them correctly.
-- Runtime metric instrumentation (GC, goroutines, process stats) toggled per deployment.
-- Continuous profiler controller with Pyroscope-compatible export and coordinated service naming.
-- Shared resource builder that merges semantic conventions, environment attributes, custom detectors, and caller-provided overrides.
-- One-shot `goo11y.New` wiring or global registration per signal via `UseGlobal`.
+- **Logger**: Zerolog core, optional console and file writers, OTLP/HTTP export with async or synchronous delivery, disk-backed queueing, and automatic trace/span correlation.
+- **Tracer**: OTLP trace exporter over HTTP or gRPC, ratio-based sampling, retry-enabled batch processor, and optional disk queue for HTTP delivery.
+- **Meter**: OTLP metric exporter over HTTP or gRPC, periodic reader, runtime Go instrumentation, and optional disk queue for HTTP delivery.
+- **Profiler**: Pyroscope continuous profiler with configurable tags, multi-tenant headers, and basic auth handling.
+- **Resource builder**: Semantic-convention defaults, environment overrides, custom detectors, and hook points for last-mile customization.
+
+The library concentrates on initialization; once configured you continue to use `go.opentelemetry.io/otel`, `otel/trace`, `otel/metric`, and standard logging patterns.
 
 ## Installation
 
@@ -31,7 +28,7 @@ Goo11y is a batteries-included observability bundle for Go services. It configur
 go get github.com/mfahmialkautsar/goo11y
 ```
 
-## Quick Start
+## Usage Example
 
 ```go
 package main
@@ -39,60 +36,77 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 
 	"github.com/mfahmialkautsar/goo11y"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/meter"
 	"github.com/mfahmialkautsar/goo11y/profiler"
 	"github.com/mfahmialkautsar/goo11y/tracer"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func main() {
 	ctx := context.Background()
 	tele, err := goo11y.New(ctx, goo11y.Config{
 		Resource: goo11y.ResourceConfig{
-			ServiceName:    "account-service",
+			ServiceName:    "checkout",
+			ServiceVersion: "1.0.0",
 			Environment:    "production",
-			ServiceVersion: "1.4.3",
 		},
 		Logger: logger.Config{
-			Enabled:  true,
-			Level:    "info",
-			Console:  false,
+			Enabled: true,
+			Level:   "info",
 			OTLP: logger.OTLPConfig{
-				Endpoint: "otlp.example.com",
-				UseSpool: true,
-				Async:    true,
+				Endpoint: "telemetry.example.com:4318",
+				UseSpool: true,   // disk queue for reliability
+				Async:    true,   // fire-and-forget write path
 			},
 		},
 		Tracer: tracer.Config{
 			Enabled:  true,
-			Endpoint: "otlp.example.com",
-			UseSpool: true,
+			Endpoint: "telemetry.example.com:4318",
 		},
 		Meter: meter.Config{
-			Enabled: true,
-			Endpoint: "otlp.example.com",
-			UseSpool: true,
-			Runtime: meter.RuntimeConfig{Enabled: true},
+			Enabled:  true,
+			Endpoint: "telemetry.example.com:4318",
+			Runtime:  meter.RuntimeConfig{Enabled: true},
 		},
-		Profiler: profiler.Config{Enabled: true},
+		Profiler: profiler.Config{
+			Enabled:   true,
+			ServerURL: "https://pyro.example.com",
+		},
 	})
 	if err != nil {
 		log.Fatalf("init telemetry: %v", err)
 	}
 	defer tele.Shutdown(ctx)
 
-	reqLogger := tele.Logger.WithContext(ctx).With("component", "api")
-	reqLogger.Info("processing request", "request_id", "abc-123")
+	if tele.Logger != nil {
+		tele.Logger.WithContext(ctx).Info("service online")
+	}
+
+	tracer := otel.Tracer("checkout.api")
+	ctx, span := tracer.Start(ctx, "charge-card", trace.WithAttributes(attribute.String("tenant", "enterprise")))
+	defer span.End()
+
+	meter := otel.Meter("checkout.api")
+	requestCounter, err := meter.Int64Counter("http.server.requests")
+	if err == nil {
+		requestCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("method", http.MethodPost)))
+	}
+
+	// Application logic
 }
 ```
 
-All enabled signals adopt the configured resource metadata. Shutdown drains in-flight telemetry and stops the profiler with a five-second grace period.
+`goo11y.New` returns a `Telemetry` handle holding the constructed logger, tracer provider, meter provider, and profiler controller. The OpenTelemetry globals are already set, so any instrumentation that calls `otel.Tracer`, `otel.Meter`, or registers propagators works without further wiring.
 
-## Configuration Surface
-
-The top-level struct looks like:
+## Configuration Reference
 
 ```go
 type Config struct {
@@ -105,61 +119,60 @@ type Config struct {
 }
 ```
 
-- **Resource** (`goo11y.ResourceConfig`): `ServiceName` is required. Optional fields add version, namespace, arbitrary attributes, detectors, override factory, and customizers.
-- **Logger** (`logger.Config`): Enable OTLP/HTTP export with optional disk queues (`UseSpool: true`, default), sync/async delivery (`Async: true`, default), daily file rotation, console output in non-production, and credential-backed headers. Endpoints are normalized (scheme optional). Only HTTP/HTTPS protocols supported. `UseGlobal` promotes the logger via `logger.Init`.
-- **Tracer** (`tracer.Config`): Configures an OTLP exporter supporting HTTP and gRPC protocols (explicit `Protocol` field), sampling ratio, optional persistent queue (`UseSpool: true`, default), and `UseGlobal` for `otel.SetTracerProvider`. Endpoints are normalized automatically.
-- **Meter** (`meter.Config`): Sets OTLP metrics export supporting HTTP and gRPC protocols (explicit `Protocol` field), optional spooling (`UseSpool: true`, default), runtime instrumentation (`goroutine`, `memory`, `cpu`, `build`), and `UseGlobal` for `otel.SetMeterProvider`. Endpoints are normalized automatically.
-- **Profiler** (`profiler.Config`): Integrates continuous profiling with flamegraph export, including optional authentication and service metadata alignment.
+- **ResourceConfig**: `ServiceName` is mandatory. Optional fields (`ServiceVersion`, `ServiceNamespace`, `Environment`, custom `Attributes`) feed into the OpenTelemetry resource. Detectors, extra `resource.Option` entries, and an `Override` factory allow integration with platform-specific metadata providers. Post-build `Customizers` run sequentially.
+- **logger.Config**: Enables Zerolog with optional console output, daily file writer, and OTLP/HTTP export. `OTLP.Endpoint` accepts either a full URL or host:port and determines scheme from `Insecure`. `UseSpool` stores log batches under `${XDG_CACHE_HOME}/goo11y/logs` by default. `Async` toggles fire-and-forget vs blocking delivery. `Credentials` merges HTTP headers without overwriting caller-specified Authorization headers. `UseGlobal` calls `logger.Init` so `logger.WithContext` and other globals target the configured logger.
+- **tracer.Config**: Requires an endpoint (host:port) and defaults to OTLP/HTTP. Set `Protocol` to `otlputil.ProtocolGRPC` for gRPC exporters. `UseSpool` activates the disk queue for the HTTP pipeline (gRPC ignores it). `SampleRatio` drives parent-based trace sampling. `UseGlobal` calls `tracer.Init`, otherwise `tracer.Setup` still installs the provider into OpenTelemetry globals while returning the handle for explicit shutdown.
+- **meter.Config**: Mirrors tracer configuration for metrics. HTTP exporters support disk queueing; gRPC exporters stream directly. `ExportInterval` controls the periodic reader schedule. `Runtime.Enabled` toggles Go runtime gauges (goroutines, heap alloc). `UseGlobal` invokes `meter.Init`.
+- **profiler.Config**: Describes a Pyroscope deployment: full `ServerURL`, `ServiceName`, optional tags, tenant ID, credential headers, and mutex/block profiling rates. `UseGlobal` exposes the controller via `profiler.Global`.
 
-Credentials implement `auth.Credentials` and merge into OTLP headers for every signal, avoiding manual authorization plumbing.
+### Credential Handling
 
-### Protocol Support
+`auth.Credentials` unifies bearer tokens, API keys, basic auth, and arbitrary headers. Merged headers prefer telemetry-specific credentials over caller-supplied Authorization values to avoid duplication.
 
-Tracer and Meter support HTTP and gRPC via explicit `Protocol` field:
+## Working with OpenTelemetry
 
-```go
-import "github.com/mfahmialkautsar/goo11y/internal/otlputil"
+Goo11y programs the OpenTelemetry globals during setup. That keeps instrumentation idiomatic:
 
-Tracer: tracer.Config{
-	Endpoint: "otlp.example.com",
-	Protocol: otlputil.ProtocolHTTP, // or otlputil.ProtocolGRPC
-}
-```
+- Call `otel.Tracer` or `otel.Meter` anywhere after initialization.
+- Existing middleware that expects `otel.GetTextMapPropagator` or `otel.GetTracerProvider` requires no change.
+- `tele.Tracer.RegisterSpanProcessor` lets you attach additional span processors (for example, tail-based sampling) without reinitializing exporters.
+- When `UseGlobal` is true for a signal, the respective package-level helpers (`logger.Info`, `tracer.Tracer`, `meter.Meter`, `profiler.Global`) point at the configured components.
 
-Logger only supports HTTP/HTTPS.
+`tele.Shutdown(ctx)` flushes metrics, traces, and logs, waits up to five seconds, and then stops the profiler. Call it on graceful termination.
 
-### Delivery Modes
+## Disk Queues and Reliability
 
-Each signal supports flexible delivery:
+Disk-backed queues live under `${XDG_CACHE_HOME}/goo11y/<signal>` (or the system temp directory as a fallback). Each queue persists OTLP requests as timestamped files and retries with exponential backoff (1s minimum, 1m maximum). The HTTP-based exporters (logs, traces HTTP, metrics HTTP) and the logger OTLP writer support spooling. gRPC exporters send synchronously without spooling.
 
-- **UseSpool** (default: `true`): Write to disk queue for guaranteed delivery and automatic retry with exponential backoff. Set to `false` for direct HTTP.
-- **Async** (logger only, default: `true`): Fire-and-forget writes. Set to `false` for blocking synchronous delivery.
+If you disable spooling (`UseSpool: false`), requests go straight to the configured endpoint and follow the exporter retry policy.
 
-Example for low-latency synchronous delivery without spooling:
+## Logging Notes
 
-```go
-Logger: logger.Config{
-	OTLP: logger.OTLPConfig{
-		Endpoint: "otlp.example.com",
-		UseSpool: false,
-		Async:    false,
-	},
-},
-```
+- Zerolog timestamps use `time.Time` in RFC3339 nanosecond format.
+- Trace correlation injects `trace_id` and `span_id` when a context carries a recording span.
+- When OTLP logging is enabled, Goo11y multiplexes all configured writers through `io.MultiWriter`. If no writer is specified, `stdout` is used by default.
+- Spool warnings for the log exporter are emitted to `stderr` to aid debugging during development and tests.
 
-## Persistent Delivery
+## Metrics and Tracing Notes
 
-When `UseSpool: true` (default), all network emitters use a persistent disk queue, writing batches to the user's cache directory (`os.UserCacheDir()/goo11y/<signal>`). Failed requests are retried with exponential backoff (1s → 1min max), protecting telemetry during outages or restarts. All spool errors are logged for visibility.
+- Endpoints accept bare host:port or URLs; Goo11y normalizes them to the format expected by OTLP exporters.
+- HTTP exporters use `persistenthttp` to enqueue payloads and respond immediately with an accepted response to the caller.
+- gRPC exporters use TLS unless `Insecure` is set.
+- Runtime metrics currently cover goroutine counts and heap allocation and can be extended via the exposed `meter.Provider`.
 
-Set `UseSpool: false` to bypass the queue and send directly via HTTP. For the logger, combine with `Async: false` for fully synchronous blocking delivery.
+## Profiling Notes
+
+- Goo11y starts the Pyroscope profiler immediately on initialization when `Enabled` is true.
+- Mutex and block profiling rates default to non-zero values (5) to provide useful out-of-the-box telemetry; adjust them as needed for production load.
+- Credentials support header injection and optional basic auth without duplicating Authorization headers.
 
 ## Testing
-
-Every feature in this README is validated by the repository test suite. Run locally with:
 
 ```sh
 go test ./...
 ```
+
+All public behaviour described above is covered by the repository test suite and integration tests.
 
 ## License
 

@@ -26,29 +26,23 @@ type otlpWriter struct {
 }
 
 func newOTLPWriter(cfg OTLPConfig, serviceName, environment string) (io.Writer, error) {
-	// Preserve user's endpoint, only add scheme if missing
 	endpoint := strings.TrimSpace(cfg.Endpoint)
 	if endpoint == "" {
 		return nil, fmt.Errorf("otlp: endpoint is required")
 	}
 
-	// Add scheme only if missing
 	if !strings.Contains(endpoint, "://") {
+		scheme := "https://"
 		if cfg.Insecure {
-			endpoint = "http://" + endpoint
-		} else {
-			endpoint = "https://" + endpoint
+			scheme = "http://"
 		}
+		endpoint = scheme + endpoint
 	}
-	// If user provided a scheme, use it as-is (don't override)
 
 	var queue *spool.Queue
 	var err error
 	if cfg.UseSpool {
-		queue, err = spool.NewWithErrorLogger(cfg.QueueDir, spool.ErrorLoggerFunc(func(err error) {
-			// Print spool errors to stderr for visibility during tests
-			_, _ = fmt.Fprintf(os.Stderr, "[otlp-spool] %v\n", err)
-		}))
+		queue, err = spool.NewWithErrorLogger(cfg.QueueDir, spool.ErrorLoggerFunc(logOTLPSpoolError))
 		if err != nil {
 			return nil, err
 		}
@@ -125,6 +119,14 @@ func (ow *otlpWriter) Write(p []byte) (int, error) {
 	}
 
 	return len(p), ow.sendSync(payload)
+}
+
+// logOTLPSpoolError writes spool warnings to stderr for visibility during development and tests.
+func logOTLPSpoolError(err error) {
+	if err == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "[otlp-spool] %v\n", err)
 }
 
 func (ow *otlpWriter) sendSync(payload []byte) error {

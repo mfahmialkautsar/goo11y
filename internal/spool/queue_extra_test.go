@@ -66,6 +66,7 @@ func TestCleanOldFilesRemovesExpiredEntries(t *testing.T) {
 
 	staleTime := time.Now().Add(-2 * time.Minute)
 	freshTime := time.Now()
+	const freshIndex = maxBufferFiles
 
 	for i := 0; i < maxBufferFiles+1; i++ {
 		name := cutoffName(i)
@@ -75,7 +76,7 @@ func TestCleanOldFilesRemovesExpiredEntries(t *testing.T) {
 			t.Fatalf("WriteFile: %v", err)
 		}
 		modTime := staleTime
-		if i == maxBufferFiles { // ensure one file survives cleanup for coverage
+		if i == freshIndex {
 			modTime = freshTime
 		}
 		if err := os.Chtimes(path, modTime, modTime); err != nil {
@@ -92,7 +93,6 @@ func TestCleanOldFilesRemovesExpiredEntries(t *testing.T) {
 		t.Fatalf("ReadDir: %v", err)
 	}
 
-	// Only the fresh file should remain.
 	if len(entries) != 1 {
 		t.Fatalf("expected one file to remain, got %d", len(entries))
 	}
@@ -127,7 +127,6 @@ func TestQueueCompleteIgnoresMissingFiles(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Removing a non-existent file should not fail.
 	if err := queue.Complete("non-existent.spool"); err != nil {
 		t.Fatalf("expected missing file removal to succeed, got %v", err)
 	}

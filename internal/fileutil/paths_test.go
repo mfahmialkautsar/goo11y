@@ -23,7 +23,6 @@ func TestDefaultQueueDir(t *testing.T) {
 		t.Fatalf("unexpected parent directory: %q", filepath.Base(filepath.Dir(dir)))
 	}
 
-	// Creating the directory should succeed even if it already exists.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
