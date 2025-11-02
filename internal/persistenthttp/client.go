@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/internal/spool"
@@ -13,7 +14,10 @@ import (
 
 func NewClient(queueDir string, timeout time.Duration) (*http.Client, error) {
 	queue, err := spool.NewWithErrorLogger(queueDir, spool.ErrorLoggerFunc(func(err error) {
-		fmt.Fprintf(io.Discard, "persistenthttp spool error: %v\n", err)
+		if err == nil {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[persistenthttp] %v\n", err)
 	}))
 	if err != nil {
 		return nil, err

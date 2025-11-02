@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -171,4 +172,156 @@ func TestTransportWrapperEnqueueError(t *testing.T) {
 	if _, err := wrapper.RoundTrip(req); err == nil || !strings.Contains(err.Error(), "spool") {
 		t.Fatalf("expected enqueue error, got %v", err)
 	}
+}
+
+func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
+	queueDir := t.TempDir()
+
+	var fail atomic.Bool
+	fail.Store(true)
+
+	type captured struct {
+		body   string
+		status int
+	}
+
+	results := make(chan captured, 16)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		status := http.StatusOK
+		if fail.Load() {
+			status = http.StatusServiceUnavailable
+		}
+		w.WriteHeader(status)
+		results <- captured{body: string(data), status: status}
+	}))
+	defer server.Close()
+
+	recorder := startStderrRecorder(t)
+	defer recorder.Close()
+
+	client, err := NewClient(queueDir, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	firstReq, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewBufferString("first"))
+	if err != nil {
+		t.Fatalf("NewRequest first: %v", err)
+	}
+	resp, err := client.Do(firstReq)
+	if err != nil {
+		t.Fatalf("client.Do first: %v", err)
+	}
+	resp.Body.Close()
+
+	waitForQueueFiles(t, queueDir, func(n int) bool { return n > 0 })
+
+	waitForResult(t, results, func(r captured) bool {
+		return r.body == "first" && r.status == http.StatusServiceUnavailable
+	})
+
+	fail.Store(false)
+
+	secondReq, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewBufferString("second"))
+	if err != nil {
+		t.Fatalf("NewRequest second: %v", err)
+	}
+	resp2, err := client.Do(secondReq)
+	if err != nil {
+		t.Fatalf("client.Do second: %v", err)
+	}
+	resp2.Body.Close()
+
+	waitForResult(t, results, func(r captured) bool {
+		return r.body == "first" && r.status == http.StatusOK
+	})
+
+	waitForResult(t, results, func(r captured) bool {
+		return r.body == "second" && r.status == http.StatusOK
+	})
+
+	waitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
+
+	output := recorder.Close()
+	if !strings.Contains(output, "remote status 503") {
+		t.Fatalf("expected spool error log, got %q", output)
+	}
+}
+
+func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("ReadDir: %v", err)
+		}
+		if done(len(entries)) {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for queue state, entries=%d", len(entries))
+		default:
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+}
+
+func waitForResult[T any](t *testing.T, ch <-chan T, match func(T) bool) T {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case item := <-ch:
+			if match(item) {
+				return item
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for result")
+		}
+	}
+}
+
+type stderrRecorder struct {
+	orig     *os.File
+	r        *os.File
+	w        *os.File
+	buf      bytes.Buffer
+	done     chan struct{}
+	captured string
+	once     sync.Once
+}
+
+func startStderrRecorder(t *testing.T) *stderrRecorder {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	recorder := &stderrRecorder{
+		orig: os.Stderr,
+		r:    r,
+		w:    w,
+		done: make(chan struct{}),
+	}
+	os.Stderr = w
+	go func() {
+		_, _ = io.Copy(&recorder.buf, r)
+		close(recorder.done)
+	}()
+	return recorder
+}
+
+func (r *stderrRecorder) Close() string {
+	r.once.Do(func() {
+		_ = r.w.Close()
+		<-r.done
+		os.Stderr = r.orig
+		r.captured = r.buf.String()
+	})
+	return r.captured
 }
