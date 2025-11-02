@@ -26,7 +26,7 @@ func (p *Provider) RegisterSpanProcessor(processor sdktrace.SpanProcessor) {
 	p.provider.RegisterSpanProcessor(processor)
 }
 
-// Setup initialises an OTLP tracer provider based on the provided configuration.
+// Setup initializes an OTLP tracer provider based on the provided configuration.
 // Selects HTTP or gRPC exporters based on the Exporter config field.
 func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {
 	cfg = cfg.ApplyDefaults()

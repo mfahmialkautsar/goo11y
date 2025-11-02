@@ -104,7 +104,9 @@ func readAll(body io.ReadCloser) ([]byte, error) {
 	if body == nil {
 		return nil, nil
 	}
-	defer body.Close()
+	defer func() {
+		_ = body.Close()
+	}()
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return nil, err

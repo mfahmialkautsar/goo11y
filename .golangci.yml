@@ -1,0 +1,27 @@
+version: "2"
+
+run:
+  timeout: 5m
+  go: "1.24"
+  modules-download-mode: readonly
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - revive
+    - misspell
+  disable:
+    - unused
+  settings:
+    revive:
+      severity: warning
+    misspell:
+      locale: US
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

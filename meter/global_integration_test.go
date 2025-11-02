@@ -75,7 +75,7 @@ func TestGlobalMimirMetricsIntegration(t *testing.T) {
 	}
 
 	attr := attribute.String("test_case", labelValue)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		counter.Add(ctx, 1, metric.WithAttributes(attr))
 		time.Sleep(50 * time.Millisecond)
 	}

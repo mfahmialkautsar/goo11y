@@ -107,7 +107,7 @@ func TestLoggerSpanEventsIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	var discard io.Writer = io.Discard
+	discard := io.Discard
 	cfg := Config{
 		Enabled:     true,
 		Level:       "debug",

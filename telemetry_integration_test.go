@@ -137,7 +137,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		burnCPU(500 * time.Millisecond)
 
 		if tele.Logger == nil {
-			t.Fatal("expected logger to be initialised")
+			t.Fatal("expected logger to be initialized")
 		}
 		tele.Logger.WithContext(ctx).Info(logMessage, "test_case", testCase)
 
@@ -218,7 +218,7 @@ func waitForLokiTraceFields(ctx context.Context, queryBase, serviceName, message
 	values.Set("query", fmt.Sprintf(`{service_name="%s"}`, serviceName))
 	queryURL := normalizeLokiBase(queryBase) + "/loki/api/v1/query_range?" + values.Encode()
 
-	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (bool, error) {
+	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (done bool, err error) {
 		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, queryURL, nil)
 		if err != nil {
 			return false, err
@@ -227,9 +227,16 @@ func waitForLokiTraceFields(ctx context.Context, queryBase, serviceName, message
 		if err != nil {
 			return false, err
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}()
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				return false, readErr
+			}
 			return false, fmt.Errorf("loki query returned %d: %s", resp.StatusCode, string(body))
 		}
 		var payload struct {
@@ -273,7 +280,7 @@ func waitForMimirMetric(ctx context.Context, queryBase, metricName, testCase, tr
 	queryURL := strings.TrimRight(queryBase, "/") + "/prometheus/api/v1/query"
 	params := url.Values{}
 	params.Set("query", fmt.Sprintf(`%s{test_case="%s",trace_id="%s",span_id="%s"}`, metricName, testCase, traceID, spanID))
-	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (bool, error) {
+	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (done bool, err error) {
 		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, queryURL+"?"+params.Encode(), nil)
 		if err != nil {
 			return false, err
@@ -282,9 +289,16 @@ func waitForMimirMetric(ctx context.Context, queryBase, metricName, testCase, tr
 		if err != nil {
 			return false, err
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}()
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				return false, readErr
+			}
 			return false, fmt.Errorf("mimir query returned %d: %s", resp.StatusCode, string(body))
 		}
 		var payload struct {
@@ -323,7 +337,7 @@ func waitForTempoTrace(ctx context.Context, queryBase, serviceName, testCase, tr
 	params.Add("tags", fmt.Sprintf("service.name=%s", serviceName))
 	params.Add("tags", fmt.Sprintf("test_case=%s", testCase))
 
-	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (bool, error) {
+	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (done bool, err error) {
 		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, searchURL+"?"+params.Encode(), nil)
 		if err != nil {
 			return false, err
@@ -332,12 +346,19 @@ func waitForTempoTrace(ctx context.Context, queryBase, serviceName, testCase, tr
 		if err != nil {
 			return false, err
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}()
 		if resp.StatusCode == http.StatusNotFound {
 			return false, nil
 		}
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				return false, readErr
+			}
 			return false, fmt.Errorf("tempo search returned %d: %s", resp.StatusCode, string(body))
 		}
 		var payload struct {

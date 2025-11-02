@@ -66,8 +66,12 @@ func TestTracerExporterReturnsErrorOnFailure(t *testing.T) {
 	statusCh := make(chan int, 64)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		r.Body.Close()
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("drain trace exporter body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("close trace exporter body: %v", err)
+		}
 		trySendStatus(statusCh, http.StatusServiceUnavailable)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -135,8 +139,12 @@ func TestTracerSpoolRecoversAfterFailure(t *testing.T) {
 	statusCh := make(chan int, 128)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		r.Body.Close()
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("drain trace spool body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("close trace spool body: %v", err)
+		}
 		status := http.StatusOK
 		if fail.Load() {
 			status = http.StatusServiceUnavailable

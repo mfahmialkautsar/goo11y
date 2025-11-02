@@ -63,8 +63,12 @@ func TestMeterExporterReturnsErrorOnFailure(t *testing.T) {
 	statusCh := make(chan int, 64)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		r.Body.Close()
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("io.Copy: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("r.Body.Close: %v", err)
+		}
 		trySendStatus(statusCh, http.StatusServiceUnavailable)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -139,8 +143,12 @@ func TestMeterSpoolRecoversAfterFailure(t *testing.T) {
 	statusCh := make(chan int, 128)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		r.Body.Close()
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("io.Copy: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("r.Body.Close: %v", err)
+		}
 		status := http.StatusOK
 		if fail.Load() {
 			status = http.StatusServiceUnavailable
@@ -183,7 +191,7 @@ func TestMeterSpoolRecoversAfterFailure(t *testing.T) {
 		t.Fatalf("Int64Counter: %v", err)
 	}
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		counter.Add(context.Background(), 1)
 	}
 
@@ -196,7 +204,7 @@ func TestMeterSpoolRecoversAfterFailure(t *testing.T) {
 
 	fail.Store(false)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		counter.Add(context.Background(), 1)
 	}
 

@@ -67,12 +67,16 @@ func TestWaitForEmptyDir(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
+	errCh := make(chan error, 1)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		os.Remove(file)
+		errCh <- os.Remove(file)
 	}()
 
 	if err := WaitForEmptyDir(ctx, dir, 10*time.Millisecond); err != nil {
 		t.Fatalf("WaitForEmptyDir: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("Remove: %v", err)
 	}
 }

@@ -36,7 +36,7 @@ func WaitUntil(ctx context.Context, interval time.Duration, fn func(context.Cont
 }
 
 // CheckReachable returns an error if the target cannot be reached within the context deadline.
-func CheckReachable(ctx context.Context, rawURL string) error {
+func CheckReachable(ctx context.Context, rawURL string) (err error) {
 	if rawURL == "" {
 		return errors.New("empty url")
 	}
@@ -52,7 +52,11 @@ func CheckReachable(ctx context.Context, rawURL string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	return nil
 }
 

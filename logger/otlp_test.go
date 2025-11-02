@@ -228,8 +228,12 @@ func TestOTLPWriterWriteSpool(t *testing.T) {
 
 func TestOTLPWriterWriteReturnsErrorOnFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		r.Body.Close()
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("io.Copy: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("r.Body.Close: %v", err)
+		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(srv.Close)
@@ -266,8 +270,13 @@ func TestOTLPWriterSpoolRecoversAfterFailure(t *testing.T) {
 	results := make(chan captured, 16)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data, _ := io.ReadAll(r.Body)
-		r.Body.Close()
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("r.Body.Close: %v", err)
+		}
 		status := http.StatusOK
 		if fail.Load() {
 			status = http.StatusServiceUnavailable

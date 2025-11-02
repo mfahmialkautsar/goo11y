@@ -252,13 +252,23 @@ func TestNewInitializesLoggerOnly(t *testing.T) {
 
 func TestTelemetryLinksTracesToProfiles(t *testing.T) {
 	traceSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("drain trace body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("close trace body: %v", err)
+		}
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer traceSrv.Close()
 
 	profileSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("drain profile body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("close profile body: %v", err)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer profileSrv.Close()

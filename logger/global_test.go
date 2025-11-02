@@ -125,7 +125,8 @@ func TestGlobalHelpersDelegate(t *testing.T) {
 	Use(stub)
 	t.Cleanup(func() { Use(nil) })
 
-	tCtx := context.WithValue(context.Background(), "key", "value")
+	type contextKey string
+	tCtx := context.WithValue(context.Background(), contextKey("key"), "value")
 	WithContext(tCtx).Info("context-msg")
 
 	With("foo", "bar").Warn("with-msg", "answer", 42)

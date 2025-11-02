@@ -1,4 +1,3 @@
-[![Docs](https://img.shields.io/badge/docs-README-blue.svg)](https://github.com/mfahmialkautsar/goo11y#readme)
 # Goo11y
 
 [![CI](https://github.com/mfahmialkautsar/goo11y/actions/workflows/ci.yml/badge.svg)](https://github.com/mfahmialkautsar/goo11y/actions/workflows/ci.yml)
@@ -166,30 +165,13 @@ If you disable spooling (`UseSpool: false`), requests go straight to the configu
 - Mutex and block profiling rates default to non-zero values (5) to provide useful out-of-the-box telemetry; adjust them as needed for production load.
 - Credentials support header injection and optional basic auth without duplicating Authorization headers.
 
-## Testing
+## Development Workflow
 
-```sh
-# Run all tests (unit + integration)
-make test                     # ~40s total
+- `golangci-lint run` — mirrors the CI lint job (default linters + project overrides).
+- `go clean -cache && go test ./...` — runs the full suite the same way CI executes unit and integration tests.
+- `make test`, `make test-unit`, `make test-integration` — convenience wrappers that already clean caches and apply race detection.
 
-# Run only unit tests (fast)
-make test-unit               # ~32s (skips integration with -short)
-
-# Run only integration tests
-make test-integration        # Requires Docker services running
-```
-
-**Requirements for Integration Tests:**
-- Docker services running: Alloy, Loki, Mimir, Tempo, Pyroscope
-- Integration tests use 60s timeout for real service interactions
-- Unit tests skip integration tests with `-short` flag
-
-**Performance:**
-- Unit tests: ~32s with race detector
-- Integration tests: ~9-15s each
-- Total: ~40s for complete suite
-
-All public behaviour is covered by the repository test suite and integration tests.
+Integration tests exercise end-to-end exporters against test HTTP servers; they do not require external containers but still take longer than pure unit tests. Run `make test-unit` for a fast feedback loop.
 
 ## License
 

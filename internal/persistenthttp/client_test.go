@@ -21,7 +21,11 @@ func TestClientFlushesRequests(t *testing.T) {
 
 	bodyCh := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
+		defer func() {
+			if err := r.Body.Close(); err != nil {
+				t.Fatalf("r.Body.Close: %v", err)
+			}
+		}()
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("ReadAll: %v", err)
@@ -48,7 +52,9 @@ func TestClientFlushesRequests(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("unexpected status code: %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("resp.Body.Close: %v", err)
+	}
 
 	select {
 	case payload := <-bodyCh:
@@ -75,8 +81,12 @@ func TestClientRetriesUntilSuccess(t *testing.T) {
 
 	var attempts int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		r.Body.Close()
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("io.Copy: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("r.Body.Close: %v", err)
+		}
 		n := atomic.AddInt32(&attempts, 1)
 		if n == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -100,13 +110,12 @@ func TestClientRetriesUntilSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client.Do: %v", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("resp.Body.Close: %v", err)
+	}
 
 	deadline := time.After(1 * time.Second)
-	for {
-		if atomic.LoadInt32(&attempts) >= 2 {
-			break
-		}
+	for atomic.LoadInt32(&attempts) < 2 {
 		select {
 		case <-deadline:
 			t.Fatalf("expected retry, attempts=%d", atomic.LoadInt32(&attempts))
@@ -188,8 +197,13 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 	results := make(chan captured, 16)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data, _ := io.ReadAll(r.Body)
-		r.Body.Close()
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("r.Body.Close: %v", err)
+		}
 		status := http.StatusOK
 		if fail.Load() {
 			status = http.StatusServiceUnavailable
@@ -215,7 +229,9 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client.Do first: %v", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("resp.Body.Close: %v", err)
+	}
 
 	waitForQueueFiles(t, queueDir, func(n int) bool { return n > 0 })
 
@@ -233,7 +249,9 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client.Do second: %v", err)
 	}
-	resp2.Body.Close()
+	if err := resp2.Body.Close(); err != nil {
+		t.Fatalf("resp2.Body.Close: %v", err)
+	}
 
 	waitForResult(t, results, func(r captured) bool {
 		return r.body == "first" && r.status == http.StatusOK

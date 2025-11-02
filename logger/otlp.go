@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -114,7 +115,11 @@ func (ow *otlpWriter) Write(p []byte) (int, error) {
 	}
 
 	if ow.async {
-		go ow.sendSync(payload)
+		go func() {
+			if err := ow.sendSync(payload); err != nil {
+				logOTLPAsyncError(err)
+			}
+		}()
 		return len(p), nil
 	}
 
@@ -129,8 +134,15 @@ func logOTLPSpoolError(err error) {
 	_, _ = fmt.Fprintf(os.Stderr, "[otlp-spool] %v\n", err)
 }
 
+func logOTLPAsyncError(err error) {
+	if err == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "[otlp-async] %v\n", err)
+}
+
 func (ow *otlpWriter) sendSync(payload []byte) error {
-	req, err := http.NewRequest(http.MethodPost, ow.endpoint, strings.NewReader(string(payload)))
+	req, err := http.NewRequest(http.MethodPost, ow.endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("otlp: create request: %w", err)
 	}
@@ -145,7 +157,9 @@ func (ow *otlpWriter) sendSync(payload []byte) error {
 	if err != nil {
 		return fmt.Errorf("otlp: send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	_, _ = io.Copy(io.Discard, resp.Body)
 

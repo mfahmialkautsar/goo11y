@@ -68,10 +68,10 @@ func TestCleanOldFilesRemovesExpiredEntries(t *testing.T) {
 	freshTime := time.Now()
 	const freshIndex = maxBufferFiles
 
-	for i := 0; i < maxBufferFiles+1; i++ {
+	for i := range maxBufferFiles + 1 {
 		name := cutoffName(i)
 		path := filepath.Join(dir, name)
-		payload := []byte(fmt.Sprintf("payload-%d", i))
+		payload := fmt.Appendf(nil, "payload-%d", i)
 		if err := os.WriteFile(path, payload, 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
@@ -110,7 +110,7 @@ func TestNextBackoffBounds(t *testing.T) {
 	}
 
 	current := initialBackoff
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		current = nextBackoff(current)
 	}
 	if current != maxBackoff {

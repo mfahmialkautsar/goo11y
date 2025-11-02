@@ -31,7 +31,7 @@ func (h *HTTPRequest) Unmarshal(data []byte) error {
 }
 
 func HTTPHandler(client *http.Client) Handler {
-	return func(ctx context.Context, payload []byte) error {
+	return func(ctx context.Context, payload []byte) (err error) {
 		var req HTTPRequest
 		if err := req.Unmarshal(payload); err != nil {
 			return ErrCorrupt
@@ -49,8 +49,14 @@ func HTTPHandler(client *http.Client) Handler {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
-		_, _ = io.Copy(io.Discard, resp.Body)
+		defer func() {
+			if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}()
+		if _, copyErr := io.Copy(io.Discard, resp.Body); copyErr != nil {
+			return copyErr
+		}
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			return fmt.Errorf("spool: remote status %d", resp.StatusCode)
 		}

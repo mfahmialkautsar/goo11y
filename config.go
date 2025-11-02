@@ -34,7 +34,7 @@ type ResourceConfig struct {
 	Override         ResourceFactory
 }
 
-// ResourceFactory is an optional hook to build a base resource overriding default behaviour.
+// ResourceFactory is an optional hook to build a base resource overriding default behavior.
 type ResourceFactory func(context.Context) (*resource.Resource, error)
 
 // ResourceCustomizer allows callers to extend or replace the resulting resource.
