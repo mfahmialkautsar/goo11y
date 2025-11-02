@@ -10,8 +10,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/pkgerrors"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -194,38 +192,8 @@ func (l *zerologLogger) emit(level string, err error, event *zerolog.Event, msg 
 		combined = append(combined, l.static...)
 	}
 	combined = append(combined, fields...)
-	l.recordSpanEvent(level, err, msg, combined)
 	applyFields(event, combined)
 	event.Msg(msg)
-}
-
-func (l *zerologLogger) recordSpanEvent(level string, err error, msg string, fields []any) {
-	ctx := l.ctx
-	if ctx == nil {
-		return
-	}
-	span := trace.SpanFromContext(ctx)
-	if span == nil || !span.IsRecording() {
-		return
-	}
-
-	attrs := make([]attribute.KeyValue, 0, len(fields)/2+4)
-	attrs = append(attrs,
-		attribute.String("log.level", level),
-		attribute.String("log.message", msg),
-	)
-	if err != nil {
-		attrs = append(attrs,
-			attribute.String("error.type", fmt.Sprintf("%T", err)),
-			attribute.String("error.message", err.Error()),
-		)
-	}
-	attrs = append(attrs, attributesFromFields(fields)...)
-	eventName := "log"
-	if msg != "" {
-		eventName = msg
-	}
-	span.AddEvent(eventName, trace.WithAttributes(attrs...))
 }
 
 func (l *zerologLogger) applyTrace(event *zerolog.Event) {

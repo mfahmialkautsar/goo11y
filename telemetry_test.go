@@ -72,20 +72,8 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
-	events := spans[0].Events()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-
-	attrs := testutil.AttrsToMap(events[0].Attributes)
-	if got := attrs["log.level"]; got != "warn" {
-		t.Fatalf("unexpected log.level: %v", got)
-	}
-	if got := attrs["log.message"]; got != "telemetry-warn-message" {
-		t.Fatalf("unexpected log.message: %v", got)
-	}
-	if got := attrs["error"]; got != warnErr.Error() {
-		t.Fatalf("unexpected error attribute: %v", got)
+	if events := spans[0].Events(); len(events) != 0 {
+		t.Fatalf("expected 0 span events, got %d", len(events))
 	}
 }
 

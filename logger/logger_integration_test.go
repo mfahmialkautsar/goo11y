@@ -152,15 +152,7 @@ func TestLoggerSpanEventsIntegration(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
-	events := spans[0].Events()
-	if len(events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(events))
+	if events := spans[0].Events(); len(events) != 0 {
+		t.Fatalf("expected 0 span events, got %d", len(events))
 	}
-
-	assertAttrString(t, events[0].Attributes, "log.level", "debug")
-	assertAttrString(t, events[0].Attributes, "log.message", "debug-event")
-
-	assertAttrString(t, events[1].Attributes, "log.level", "warn")
-	assertAttrString(t, events[1].Attributes, "log.message", "warn-event")
-	assertAttrString(t, events[1].Attributes, "test_case", "logger_span_events")
 }

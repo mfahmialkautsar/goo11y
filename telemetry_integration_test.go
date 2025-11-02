@@ -235,7 +235,8 @@ func waitForLokiTraceFields(ctx context.Context, queryBase, serviceName, message
 		var payload struct {
 			Data struct {
 				Result []struct {
-					Values [][]string `json:"values"`
+					Stream map[string]string `json:"stream"`
+					Values [][]string        `json:"values"`
 				} `json:"result"`
 			} `json:"data"`
 		}
@@ -243,24 +244,25 @@ func waitForLokiTraceFields(ctx context.Context, queryBase, serviceName, message
 			return false, err
 		}
 		for _, res := range payload.Data.Result {
+			if res.Stream == nil {
+				continue
+			}
+			if res.Stream["trace_id"] != traceID {
+				continue
+			}
+			if res.Stream["span_id"] != spanID {
+				continue
+			}
+			if res.Stream["service_name"] != serviceName && res.Stream["service_name_extracted"] != serviceName {
+				continue
+			}
 			for _, tuple := range res.Values {
 				if len(tuple) < 2 {
 					continue
 				}
-				var line map[string]any
-				if err := json.Unmarshal([]byte(tuple[1]), &line); err != nil {
-					continue
+				if strings.Contains(tuple[1], message) {
+					return true, nil
 				}
-				if !strings.Contains(fmt.Sprint(line["message"]), message) {
-					continue
-				}
-				if fmt.Sprint(line["trace_id"]) != traceID {
-					continue
-				}
-				if fmt.Sprint(line["span_id"]) != spanID {
-					continue
-				}
-				return true, nil
 			}
 		}
 		return false, nil

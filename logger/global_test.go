@@ -230,17 +230,9 @@ func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
-	events := spans[0].Events()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
+	if events := spans[0].Events(); len(events) != 0 {
+		t.Fatalf("expected 0 span events, got %d", len(events))
 	}
-
-	event := events[0]
-	assertAttrString(t, event.Attributes, "log.level", "error")
-	assertAttrString(t, event.Attributes, "log.message", "global-span-log")
-	assertAttrString(t, event.Attributes, "foo", "bar")
-	assertAttrString(t, event.Attributes, "error.message", boom.Error())
-	assertAttrString(t, event.Attributes, "error.type", "*errors.errorString")
 
 	entry := decodeLogLine(t, buf.Bytes())
 	if entry["message"] != "global-span-log" {

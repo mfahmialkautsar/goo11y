@@ -164,10 +164,11 @@ func (ow *otlpWriter) buildPayload(entry []byte) ([]byte, error) {
 		ObservedTimeUnixNano: strconv.FormatInt(now.UnixNano(), 10),
 		SeverityText:         "INFO",
 		SeverityNumber:       severityNumber("INFO"),
-		Body:                 otlpValue{StringValue: string(entry)},
 	}
 
 	attributes := make([]otlpKeyValue, 0)
+	message := ""
+
 	var parsed map[string]any
 	if err := json.Unmarshal(entry, &parsed); err == nil {
 		if ts, ok := parsed["time"].(string); ok {
@@ -176,14 +177,20 @@ func (ow *otlpWriter) buildPayload(entry []byte) ([]byte, error) {
 			}
 		}
 		if lvl, ok := parsed["level"].(string); ok {
-			record.SeverityText = strings.ToUpper(lvl)
-			record.SeverityNumber = severityNumber(record.SeverityText)
+			upper := strings.ToUpper(lvl)
+			if upper != "" {
+				record.SeverityText = upper
+				record.SeverityNumber = severityNumber(upper)
+			}
 		}
 		if traceID, ok := parsed[traceIDField].(string); ok {
 			record.TraceID = traceID
 		}
 		if spanID, ok := parsed[spanIDField].(string); ok {
 			record.SpanID = spanID
+		}
+		if msg, ok := parsed["message"].(string); ok {
+			message = msg
 		}
 
 		for key, value := range parsed {
@@ -194,7 +201,14 @@ func (ow *otlpWriter) buildPayload(entry []byte) ([]byte, error) {
 				attributes = append(attributes, attr)
 			}
 		}
+	} else {
+		message = string(entry)
 	}
+
+	if message == "" {
+		message = string(entry)
+	}
+	record.Body = otlpValue{StringValue: message}
 
 	if len(attributes) > 0 {
 		record.Attributes = attributes

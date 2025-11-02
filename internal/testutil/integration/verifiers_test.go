@@ -23,7 +23,12 @@ func TestWaitForLokiTraceFields(t *testing.T) {
 			"data": map[string]any{
 				"result": []any{
 					map[string]any{
-						"values": [][]string{{"0", `{"message":"hello","trace_id":"trace","span_id":"span"}`}},
+						"stream": map[string]any{
+							"service_name": "svc",
+							"trace_id":     "trace",
+							"span_id":      "span",
+						},
+						"values": [][]string{{"0", "hello"}},
 					},
 				},
 			},
@@ -46,7 +51,10 @@ func TestWaitForLokiMessage(t *testing.T) {
 			"data": map[string]any{
 				"result": []any{
 					map[string]any{
-						"values": [][]string{{"0", `{"message":"contains"}`}},
+						"stream": map[string]any{
+							"service_name": "svc",
+						},
+						"values": [][]string{{"0", "contains"}},
 					},
 				},
 			},

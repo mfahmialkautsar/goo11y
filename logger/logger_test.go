@@ -66,21 +66,9 @@ func TestLoggerAddsSpanEvents(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
-	events := spans[0].Events()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
+	if events := spans[0].Events(); len(events) != 0 {
+		t.Fatalf("expected 0 span events, got %d", len(events))
 	}
-	event := events[0]
-	if event.Name != "span-log" {
-		t.Fatalf("unexpected event name: %s", event.Name)
-	}
-
-	assertAttrString(t, event.Attributes, "log.level", "info")
-	assertAttrString(t, event.Attributes, "log.message", "span-log")
-	assertAttrString(t, event.Attributes, "static", "value")
-	assertAttrInt(t, event.Attributes, "count", 7)
-	assertAttrFloat(t, event.Attributes, "ratio", 0.5)
-	assertAttrBool(t, event.Attributes, "flag", true)
 
 	entry := decodeLogLine(t, buf.Bytes())
 	if got := entry[traceIDField]; got != traceID {
@@ -145,12 +133,8 @@ func TestLoggerSpanEventDefaultName(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
-	events := spans[0].Events()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	if events[0].Name != "log" {
-		t.Fatalf("unexpected event name: %s", events[0].Name)
+	if events := spans[0].Events(); len(events) != 0 {
+		t.Fatalf("expected 0 span events, got %d", len(events))
 	}
 }
 

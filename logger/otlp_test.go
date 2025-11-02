@@ -2,11 +2,13 @@ package logger
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -321,6 +323,79 @@ func TestOTLPWriterSpoolRecoversAfterFailure(t *testing.T) {
 	output := recorder.Close()
 	if !strings.Contains(output, "remote status 503") {
 		t.Fatalf("expected spool error log, got %q", output)
+	}
+}
+
+func TestOTLPWriterBuildPayloadUsesNativeFields(t *testing.T) {
+	ts := time.Date(2024, time.June, 1, 12, 30, 15, 123456789, time.UTC)
+	entry, err := json.Marshal(map[string]any{
+		"time":       ts.Format(time.RFC3339Nano),
+		"level":      "warn",
+		"message":    "native-body",
+		traceIDField: "abc123",
+		spanIDField:  "def456",
+		"extra":      42,
+		"flag":       true,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	ow := &otlpWriter{resourceAttrs: []otlpKeyValue{stringKeyValue("service.name", "svc")}}
+	payload, err := ow.buildPayload(entry)
+	if err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+
+	var export otlpExport
+	if err := json.Unmarshal(payload, &export); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if len(export.ResourceLogs) != 1 {
+		t.Fatalf("unexpected resource logs: %d", len(export.ResourceLogs))
+	}
+	resource := export.ResourceLogs[0]
+	if len(resource.ScopeLogs) != 1 {
+		t.Fatalf("unexpected scope logs: %d", len(resource.ScopeLogs))
+	}
+	records := resource.ScopeLogs[0].LogRecords
+	if len(records) != 1 {
+		t.Fatalf("unexpected log records: %d", len(records))
+	}
+	record := records[0]
+
+	if record.Body.StringValue != "native-body" {
+		t.Fatalf("unexpected body string: %q", record.Body.StringValue)
+	}
+	if record.SeverityText != "WARN" {
+		t.Fatalf("unexpected severity: %q", record.SeverityText)
+	}
+	if record.TraceID != "abc123" {
+		t.Fatalf("unexpected trace id: %q", record.TraceID)
+	}
+	if record.SpanID != "def456" {
+		t.Fatalf("unexpected span id: %q", record.SpanID)
+	}
+	if record.TimeUnixNano != strconv.FormatInt(ts.UnixNano(), 10) {
+		t.Fatalf("unexpected log timestamp: %s", record.TimeUnixNano)
+	}
+
+	attrs := make(map[string]otlpValue, len(record.Attributes))
+	for _, kv := range record.Attributes {
+		attrs[kv.Key] = kv.Value
+	}
+	if _, ok := attrs["message"]; ok {
+		t.Fatal("message attribute unexpectedly present")
+	}
+	if extra, ok := attrs["extra"]; !ok || extra.IntValue != "42" {
+		t.Fatalf("unexpected extra attribute: %#v", extra)
+	}
+	if flag, ok := attrs["flag"]; !ok || !flag.BoolValue {
+		t.Fatalf("unexpected flag attribute: %#v", flag)
+	}
+	if len(resource.Resource.Attributes) == 0 {
+		t.Fatal("expected resource attributes")
 	}
 }
 
