@@ -16,6 +16,8 @@ type Config struct {
 	TenantID             string `default:"anonymous"`
 	MutexProfileFraction int    `default:"5" validate:"gte=0"`
 	BlockProfileRate     int    `default:"5" validate:"gte=0"`
+	ServiceRepository    string
+	ServiceGitRef        string
 	Credentials          auth.Credentials
 	UseGlobal            bool
 }

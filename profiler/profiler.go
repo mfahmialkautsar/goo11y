@@ -24,6 +24,11 @@ func Setup(cfg Config) (*Controller, error) {
 		return nil, fmt.Errorf("profiler config: %w", err)
 	}
 
+	cfg.Tags = ensureGitLabels(cfg.Tags, gitMetadataInput{
+		repository: cfg.ServiceRepository,
+		ref:        cfg.ServiceGitRef,
+	})
+
 	headers, user, pass, hasBasic := cfg.preparedCredentials()
 
 	profilerCfg := pyroscope.Config{
