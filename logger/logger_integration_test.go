@@ -15,6 +15,9 @@ import (
 )
 
 func TestFileLoggingIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	dir := t.TempDir()
 	cfg := Config{
 		Enabled:     true,
@@ -52,7 +55,10 @@ func TestFileLoggingIntegration(t *testing.T) {
 }
 
 func TestOTLPLoggingIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	endpoints := testintegration.DefaultTargets()
@@ -98,6 +104,9 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 }
 
 func TestLoggerSpanEventsIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	var discard io.Writer = io.Discard
 	cfg := Config{
 		Enabled:     true,

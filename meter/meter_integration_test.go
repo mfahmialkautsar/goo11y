@@ -16,7 +16,10 @@ import (
 )
 
 func TestMimirMetricsIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	targets := testintegration.DefaultTargets()

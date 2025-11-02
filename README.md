@@ -169,10 +169,27 @@ If you disable spooling (`UseSpool: false`), requests go straight to the configu
 ## Testing
 
 ```sh
-go test ./...
+# Run all tests (unit + integration)
+make test                     # ~40s total
+
+# Run only unit tests (fast)
+make test-unit               # ~32s (skips integration with -short)
+
+# Run only integration tests
+make test-integration        # Requires Docker services running
 ```
 
-All public behaviour described above is covered by the repository test suite and integration tests.
+**Requirements for Integration Tests:**
+- Docker services running: Alloy, Loki, Mimir, Tempo, Pyroscope
+- Integration tests use 60s timeout for real service interactions
+- Unit tests skip integration tests with `-short` flag
+
+**Performance:**
+- Unit tests: ~32s with race detector
+- Integration tests: ~9-15s each
+- Total: ~40s for complete suite
+
+All public behaviour is covered by the repository test suite and integration tests.
 
 ## License
 

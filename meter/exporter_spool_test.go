@@ -207,6 +207,7 @@ func TestMeterSpoolRecoversAfterFailure(t *testing.T) {
 	waitForStatus(t, statusCh, http.StatusOK)
 	waitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
 
+	time.Sleep(100 * time.Millisecond)
 	output := recorder.Close()
 	if !strings.Contains(output, "remote status 503") {
 		t.Fatalf("expected spool error log, got %q", output)
@@ -215,7 +216,7 @@ func TestMeterSpoolRecoversAfterFailure(t *testing.T) {
 
 func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(2 * time.Second)
 	for {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -235,7 +236,7 @@ func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
 
 func waitForStatus(t *testing.T, ch <-chan int, want int) {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(2 * time.Second)
 	for {
 		select {
 		case status := <-ch:

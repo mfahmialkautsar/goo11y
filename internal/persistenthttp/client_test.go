@@ -102,7 +102,7 @@ func TestClientRetriesUntilSuccess(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(1 * time.Second)
 	for {
 		if atomic.LoadInt32(&attempts) >= 2 {
 			break
@@ -245,6 +245,7 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 
 	waitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
 
+	time.Sleep(100 * time.Millisecond)
 	output := recorder.Close()
 	if !strings.Contains(output, "remote status 503") {
 		t.Fatalf("expected spool error log, got %q", output)
@@ -253,7 +254,7 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 
 func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(2 * time.Second)
 	for {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -273,7 +274,7 @@ func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
 
 func waitForResult[T any](t *testing.T, ch <-chan T, match func(T) bool) T {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(2 * time.Second)
 	for {
 		select {
 		case item := <-ch:

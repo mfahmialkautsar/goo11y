@@ -13,7 +13,10 @@ import (
 var cpuSink float64
 
 func TestPyroscopeProfilingIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	targets := testintegration.DefaultTargets()
@@ -50,9 +53,9 @@ func TestPyroscopeProfilingIntegration(t *testing.T) {
 		}
 	})
 
-	burnCPU(15 * time.Second)
+	burnCPU(3 * time.Second)
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	if err := controller.Stop(); err != nil {
 		t.Fatalf("profiler stop: %v", err)

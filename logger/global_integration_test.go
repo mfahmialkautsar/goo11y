@@ -11,6 +11,9 @@ import (
 )
 
 func TestGlobalFileLoggingIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	Use(nil)
 	t.Cleanup(func() { Use(nil) })
 
@@ -47,7 +50,10 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 }
 
 func TestGlobalOTLPLoggingIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	endpoints := testintegration.DefaultTargets()

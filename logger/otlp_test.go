@@ -326,7 +326,7 @@ func TestOTLPWriterSpoolRecoversAfterFailure(t *testing.T) {
 
 func waitForCaptured[T any](t *testing.T, ch <-chan T, match func(T) bool) T {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(2 * time.Second)
 	for {
 		select {
 		case item := <-ch:
@@ -341,7 +341,7 @@ func waitForCaptured[T any](t *testing.T, ch <-chan T, match func(T) bool) T {
 
 func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(2 * time.Second)
 	for {
 		entries, err := os.ReadDir(dir)
 		if err != nil {

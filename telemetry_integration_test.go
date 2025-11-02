@@ -30,7 +30,10 @@ import (
 )
 
 func TestTelemetryTracePropagationIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	endpoints := integration.DefaultTargets()
@@ -131,7 +134,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 
 	profileID := fmt.Sprintf("profile-%s", traceID)
 	pyroscope.TagWrapper(spanCtx, pyroscope.Labels(profiler.TraceProfileAttributeKey, profileID), func(ctx context.Context) {
-		burnCPU(2 * time.Second)
+		burnCPU(500 * time.Millisecond)
 
 		if tele.Logger == nil {
 			t.Fatal("expected logger to be initialised")
@@ -163,7 +166,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		t.Fatalf("unexpected file test_case: %v", got)
 	}
 
-	time.Sleep(750 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	span.End()
 
 	if err := tele.Shutdown(ctx); err != nil {
@@ -361,7 +364,7 @@ func normalizeLokiBase(raw string) string {
 
 func waitForTelemetryFileEntry(t *testing.T, path, expectedMessage string) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
 		if errors.Is(err, os.ErrNotExist) {

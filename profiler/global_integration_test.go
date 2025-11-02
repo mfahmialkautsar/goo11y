@@ -10,10 +10,13 @@ import (
 )
 
 func TestGlobalPyroscopeProfilingIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	Use(nil)
 	t.Cleanup(func() { Use(nil) })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	targets := testintegration.DefaultTargets()
@@ -52,9 +55,9 @@ func TestGlobalPyroscopeProfilingIntegration(t *testing.T) {
 		}
 	})
 
-	burnCPU(15 * time.Second)
+	burnCPU(3 * time.Second)
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	if err := Stop(); err != nil {
 		t.Fatalf("profiler stop: %v", err)

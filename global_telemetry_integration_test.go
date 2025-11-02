@@ -19,7 +19,10 @@ import (
 )
 
 func TestGlobalTelemetryIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	endpoints := integration.DefaultTargets()
@@ -127,7 +130,7 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 
 	profileID := fmt.Sprintf("profile-%s", traceID)
 	pyroscope.TagWrapper(spanCtx, pyroscope.Labels(profiler.TraceProfileAttributeKey, profileID), func(ctx context.Context) {
-		burnCPU(2 * time.Second)
+		burnCPU(500 * time.Millisecond)
 
 		logger.WithContext(ctx).Info(logMessage, "test_case", testCase)
 
@@ -144,7 +147,7 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 		counter.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
 	})
 
-	time.Sleep(750 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	span.End()
 
 	if err := tele.Shutdown(ctx); err != nil {
