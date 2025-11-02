@@ -115,13 +115,12 @@ func (s *stubWarnLogger) SetTraceProvider(logger.TraceProvider)     {}
 func TestBuildResourceComposes(t *testing.T) {
 	cfg := Config{
 		Resource: ResourceConfig{
-			ServiceName:      "svc",
-			ServiceVersion:   "1.2.3",
-			ServiceNamespace: "ns",
-			Environment:      "prod",
-			Attributes:       map[string]string{"region": "eu"},
-			Detectors:        []sdkresource.Detector{stubDetector{attr: attribute.String("detector", "yes")}},
-			Options:          []sdkresource.Option{sdkresource.WithAttributes(attribute.String("option", "true"))},
+			ServiceName:    "svc",
+			ServiceVersion: "1.2.3",
+			Environment:    "prod",
+			Attributes:     map[string]string{"region": "eu"},
+			Detectors:      []sdkresource.Detector{stubDetector{attr: attribute.String("detector", "yes")}},
+			Options:        []sdkresource.Option{sdkresource.WithAttributes(attribute.String("option", "true"))},
 			Override: func(context.Context) (*sdkresource.Resource, error) {
 				return sdkresource.NewSchemaless(attribute.String("override", "ok")), nil
 			},
@@ -147,7 +146,6 @@ func TestBuildResourceComposes(t *testing.T) {
 	checks := map[string]string{
 		string(semconv.ServiceNameKey):               "svc",
 		string(semconv.ServiceVersionKey):            "1.2.3",
-		string(semconv.ServiceNamespaceKey):          "ns",
 		string(semconv.DeploymentEnvironmentNameKey): "prod",
 		"region":   "eu",
 		"detector": "yes",
@@ -278,8 +276,7 @@ func TestTelemetryLinksTracesToProfiles(t *testing.T) {
 
 	cfg := Config{
 		Resource: ResourceConfig{
-			ServiceName:      "telemetry-profiler",
-			ServiceNamespace: "observability",
+			ServiceName: "telemetry-profiler",
 		},
 		Tracer: tracer.Config{
 			Enabled:       true,

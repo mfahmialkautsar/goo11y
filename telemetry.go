@@ -209,9 +209,6 @@ func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) 
 	if cfg.Resource.ServiceVersion != "" {
 		attrs = append(attrs, semconv.ServiceVersionKey.String(cfg.Resource.ServiceVersion))
 	}
-	if cfg.Resource.ServiceNamespace != "" {
-		attrs = append(attrs, semconv.ServiceNamespaceKey.String(cfg.Resource.ServiceNamespace))
-	}
 	if cfg.Resource.Environment != "" {
 		attrs = append(attrs, semconv.DeploymentEnvironmentNameKey.String(cfg.Resource.Environment))
 	}

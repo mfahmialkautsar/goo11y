@@ -24,14 +24,13 @@ type Config struct {
 
 // ResourceConfig describes service identity attributes propagated to telemetry backends.
 type ResourceConfig struct {
-	ServiceName      string `validate:"required"`
-	ServiceVersion   string `default:"0.1.0"`
-	ServiceNamespace string `default:"default"`
-	Environment      string
-	Attributes       map[string]string
-	Detectors        []resource.Detector
-	Options          []resource.Option
-	Override         ResourceFactory
+	ServiceName    string `validate:"required"`
+	ServiceVersion string `default:"0.1.0"`
+	Environment    string
+	Attributes     map[string]string
+	Detectors      []resource.Detector
+	Options        []resource.Option
+	Override       ResourceFactory
 }
 
 // ResourceFactory is an optional hook to build a base resource overriding default behavior.
