@@ -1,6 +1,8 @@
 package profiler
 
 import (
+	"time"
+
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
 	"github.com/mfahmialkautsar/goo11y/auth"
@@ -20,6 +22,8 @@ type Config struct {
 	ServiceGitRef        string
 	Credentials          auth.Credentials
 	UseGlobal            bool
+	Async                bool
+	UploadRate           time.Duration `validate:"gte=0"`
 }
 
 func (c Config) withDefaults() Config {

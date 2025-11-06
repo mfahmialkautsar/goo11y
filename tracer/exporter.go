@@ -36,7 +36,11 @@ func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 	}
 	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true}))
 
-	return otlptracehttp.New(ctx, opts...)
+	exporter, err := otlptracehttp.New(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return wrapSpanExporter(exporter, "tracer", cfg.Exporter), nil
 }
 
 func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdktrace.SpanExporter, error) {
@@ -61,5 +65,42 @@ func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 
 	opts = append(opts, otlptracegrpc.WithRetry(otlptracegrpc.RetryConfig{Enabled: true}))
 
-	return otlptracegrpc.New(ctx, opts...)
+	exporter, err := otlptracegrpc.New(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return wrapSpanExporter(exporter, "tracer", cfg.Exporter), nil
+}
+
+type spanExporterWithLogging struct {
+	sdktrace.SpanExporter
+	component string
+	transport string
+}
+
+func wrapSpanExporter(exp sdktrace.SpanExporter, component, transport string) sdktrace.SpanExporter {
+	if exp == nil {
+		return exp
+	}
+	return &spanExporterWithLogging{
+		SpanExporter: exp,
+		component:    component,
+		transport:    transport,
+	}
+}
+
+func (s *spanExporterWithLogging) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	err := s.SpanExporter.ExportSpans(ctx, spans)
+	if err != nil {
+		otlputil.LogExportFailure(s.component, s.transport, err)
+	}
+	return err
+}
+
+func (s *spanExporterWithLogging) Shutdown(ctx context.Context) error {
+	err := s.SpanExporter.Shutdown(ctx)
+	if err != nil {
+		otlputil.LogExportFailure(s.component, s.transport, err)
+	}
+	return err
 }

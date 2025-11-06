@@ -158,6 +158,29 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 	return errs
 }
 
+// ForceFlush triggers immediate delivery of spans and metrics.
+func (t *Telemetry) ForceFlush(ctx context.Context) error {
+	if t == nil {
+		return nil
+	}
+
+	var errs error
+	if t.Tracer != nil {
+		if err := t.Tracer.ForceFlush(ctx); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+	if t.Meter != nil {
+		if err := t.Meter.ForceFlush(ctx); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+	if t.Profiler != nil {
+		t.Profiler.Flush(true)
+	}
+	return errs
+}
+
 func (t *Telemetry) configureIntegrations(cfg Config) {
 	if t == nil {
 		return

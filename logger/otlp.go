@@ -36,15 +36,23 @@ func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment
 	if err != nil {
 		return nil, err
 	}
+	exporter = wrapLogExporter(exporter, "logger", cfg.Exporter)
 
 	res, err := buildResource(ctx, serviceName, environment)
 	if err != nil {
 		return nil, err
 	}
 
+	var processor log.Processor
+	if !cfg.Async {
+		processor = log.NewSimpleProcessor(exporter)
+	} else {
+		processor = log.NewBatchProcessor(exporter)
+	}
+
 	provider := log.NewLoggerProvider(
 		log.WithResource(res),
-		log.WithProcessor(log.NewSimpleProcessor(exporter)),
+		log.WithProcessor(processor),
 	)
 
 	return &otlpWriter{
@@ -92,6 +100,47 @@ func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, error
 	default:
 		return nil, fmt.Errorf("otlp: unsupported exporter %q", cfg.Exporter)
 	}
+}
+
+type logExporterWithLogging struct {
+	log.Exporter
+	component string
+	transport string
+}
+
+func wrapLogExporter(exp log.Exporter, component, transport string) log.Exporter {
+	if exp == nil {
+		return exp
+	}
+	return &logExporterWithLogging{
+		Exporter:  exp,
+		component: component,
+		transport: transport,
+	}
+}
+
+func (l logExporterWithLogging) Export(ctx context.Context, records []log.Record) error {
+	err := l.Exporter.Export(ctx, records)
+	if err != nil {
+		otlputil.LogExportFailure(l.component, l.transport, err)
+	}
+	return err
+}
+
+func (l logExporterWithLogging) Shutdown(ctx context.Context) error {
+	err := l.Exporter.Shutdown(ctx)
+	if err != nil {
+		otlputil.LogExportFailure(l.component, l.transport, err)
+	}
+	return err
+}
+
+func (l logExporterWithLogging) ForceFlush(ctx context.Context) error {
+	err := l.Exporter.ForceFlush(ctx)
+	if err != nil {
+		otlputil.LogExportFailure(l.component, l.transport, err)
+	}
+	return err
 }
 
 func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, error) {

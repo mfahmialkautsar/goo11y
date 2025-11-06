@@ -62,3 +62,8 @@ func SpanContext(ctx context.Context) trace.SpanContext {
 func Shutdown(ctx context.Context) error {
 	return Global().Shutdown(ctx)
 }
+
+// ForceFlush drains pending spans on the global provider.
+func ForceFlush(ctx context.Context) error {
+	return Global().ForceFlush(ctx)
+}

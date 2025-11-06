@@ -2,7 +2,9 @@ package profiler
 
 import (
 	"fmt"
+	"math"
 	"runtime"
+	"time"
 
 	"github.com/grafana/pyroscope-go"
 )
@@ -57,6 +59,18 @@ func Setup(cfg Config) (*Controller, error) {
 		profilerCfg.BasicAuthPassword = pass
 	}
 
+	uploadRate := cfg.UploadRate
+	if !cfg.Async {
+		if uploadRate <= 0 {
+			uploadRate = time.Duration(math.MaxInt64)
+		}
+	} else if uploadRate <= 0 {
+		uploadRate = 0
+	}
+	if uploadRate > 0 {
+		profilerCfg.UploadRate = uploadRate
+	}
+
 	controller, err := pyroscope.Start(profilerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("start profiler: %w", err)
@@ -74,4 +88,12 @@ func (c *Controller) Stop() error {
 		return nil
 	}
 	return c.profiler.Stop()
+}
+
+// Flush requests an immediate upload of collected profiles.
+func (c *Controller) Flush(wait bool) {
+	if c.profiler == nil {
+		return
+	}
+	c.profiler.Flush(wait)
 }

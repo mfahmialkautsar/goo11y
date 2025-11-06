@@ -38,6 +38,7 @@ type OTLPConfig struct {
 	Timeout     time.Duration `default:"5s" validate:"omitempty,gt=0"`
 	Exporter    string        `default:"http" validate:"oneof=http grpc"`
 	Credentials auth.Credentials
+	Async       bool
 }
 
 // FileConfig controls optional file-based logging.

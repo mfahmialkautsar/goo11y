@@ -62,3 +62,8 @@ func RegisterRuntimeMetrics(ctx context.Context, cfg RuntimeConfig) error {
 func Shutdown(ctx context.Context) error {
 	return Global().Shutdown(ctx)
 }
+
+// ForceFlush flushes the global meter provider immediately.
+func ForceFlush(ctx context.Context) error {
+	return Global().ForceFlush(ctx)
+}

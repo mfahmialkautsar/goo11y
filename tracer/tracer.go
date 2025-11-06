@@ -60,12 +60,18 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	}
 
 	sam := samplerFromRatio(cfg.SampleRatio)
-
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+	options := []sdktrace.TracerProviderOption{
 		sdktrace.WithSampler(sam),
 		sdktrace.WithResource(res),
-	)
+	}
+
+	if !cfg.Async {
+		options = append(options, sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter)))
+	} else {
+		options = append(options, sdktrace.WithBatcher(exporter))
+	}
+
+	tp := sdktrace.NewTracerProvider(options...)
 
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(
@@ -92,4 +98,12 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return p.provider.Shutdown(ctx)
+}
+
+// ForceFlush pushes pending spans to the configured exporter.
+func (p *Provider) ForceFlush(ctx context.Context) error {
+	if p.provider == nil {
+		return nil
+	}
+	return p.provider.ForceFlush(ctx)
 }

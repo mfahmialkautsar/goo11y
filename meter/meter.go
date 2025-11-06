@@ -2,6 +2,7 @@ package meter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/mfahmialkautsar/goo11y/constant"
@@ -9,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 )
 
@@ -16,6 +18,7 @@ import (
 type Provider struct {
 	provider *sdkmetric.MeterProvider
 	meter    metric.Meter
+	flush    func(context.Context) error
 }
 
 // Setup configures an OTLP meter provider and registers it globally.
@@ -51,21 +54,57 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 		return nil, err
 	}
 
-	reader := sdkmetric.NewPeriodicReader(
-		exporter,
-		sdkmetric.WithInterval(cfg.ExportInterval),
+	var (
+		reader sdkmetric.Reader
+		flush  func(context.Context) error
 	)
+
+	if !cfg.Async {
+		manualReader := sdkmetric.NewManualReader()
+		reader = manualReader
+		flush = func(ctx context.Context) error {
+			var rm metricdata.ResourceMetrics
+			if err := manualReader.Collect(ctx, &rm); err != nil {
+				if !errors.Is(err, sdkmetric.ErrReaderShutdown) && !errors.Is(err, sdkmetric.ErrReaderNotRegistered) {
+					otlputil.LogExportFailure("meter", cfg.Exporter, err)
+				}
+				return err
+			}
+			if len(rm.ScopeMetrics) == 0 {
+				return exporter.ForceFlush(ctx)
+			}
+			if err := exporter.Export(ctx, &rm); err != nil {
+				return err
+			}
+			return exporter.ForceFlush(ctx)
+		}
+	} else {
+		reader = sdkmetric.NewPeriodicReader(
+			exporter,
+			sdkmetric.WithInterval(cfg.ExportInterval),
+		)
+	}
 
 	provider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithReader(reader),
 		sdkmetric.WithResource(res),
 	)
 
+	if flush == nil {
+		flush = func(ctx context.Context) error {
+			if provider == nil {
+				return nil
+			}
+			return provider.ForceFlush(ctx)
+		}
+	}
+
 	otel.SetMeterProvider(provider)
 
 	return &Provider{
 		provider: provider,
 		meter:    provider.Meter(cfg.ServiceName),
+		flush:    flush,
 	}, nil
 }
 
@@ -82,5 +121,22 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 	if p.provider == nil {
 		return nil
 	}
-	return p.provider.Shutdown(ctx)
+	var errs error
+	if p.flush != nil {
+		if err := p.flush(ctx); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+	if err := p.provider.Shutdown(ctx); err != nil {
+		errs = errors.Join(errs, err)
+	}
+	return errs
+}
+
+// ForceFlush ensures metrics are exported immediately.
+func (p *Provider) ForceFlush(ctx context.Context) error {
+	if p == nil || p.flush == nil {
+		return nil
+	}
+	return p.flush(ctx)
 }
