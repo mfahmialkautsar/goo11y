@@ -39,7 +39,7 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 		return nil, fmt.Errorf("tracer config: %w", err)
 	}
 
-	baseURL, err := otlputil.NormalizeBaseURL(cfg.Endpoint)
+	endpoint, err := otlputil.ParseEndpoint(cfg.Endpoint, cfg.Insecure)
 	if err != nil {
 		return nil, fmt.Errorf("tracer: %w", err)
 	}
@@ -48,9 +48,9 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 
 	switch cfg.Exporter {
 	case constant.ExporterGRPC:
-		exporter, err = setupGRPCExporter(ctx, cfg, baseURL)
+		exporter, err = setupGRPCExporter(ctx, cfg, endpoint)
 	case constant.ExporterHTTP:
-		exporter, err = setupHTTPExporter(ctx, cfg, baseURL)
+		exporter, err = setupHTTPExporter(ctx, cfg, endpoint)
 	default:
 		return nil, fmt.Errorf("tracer: unsupported exporter %s", cfg.Exporter)
 	}

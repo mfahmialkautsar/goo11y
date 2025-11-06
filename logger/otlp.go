@@ -21,10 +21,7 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-const (
-	otlpHTTPLogsPath      = "/v1/logs"
-	loggerInstrumentation = "github.com/mfahmialkautsar/goo11y/logger"
-)
+const loggerInstrumentation = "github.com/mfahmialkautsar/goo11y/logger"
 
 type otlpWriter struct {
 	logger otelLog.Logger
@@ -77,43 +74,36 @@ func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, error
 		return nil, fmt.Errorf("otlp: endpoint is required")
 	}
 
-	baseURL, err := otlputil.NormalizeBaseURL(endpoint)
+	parsed, err := otlputil.ParseEndpoint(endpoint, cfg.Insecure)
 	if err != nil {
 		return nil, fmt.Errorf("otlp: %w", err)
 	}
 
-	exporter := strings.ToLower(strings.TrimSpace(cfg.Exporter))
-	if exporter == "" {
-		exporter = constant.ExporterHTTP
+	mode := strings.ToLower(strings.TrimSpace(cfg.Exporter))
+	if mode == "" {
+		mode = constant.ExporterHTTP
 	}
 
-	switch exporter {
+	switch mode {
 	case constant.ExporterHTTP:
-		return setupHTTPExporter(ctx, cfg, baseURL)
+		return setupHTTPExporter(ctx, cfg, parsed)
 	case constant.ExporterGRPC:
-		host := baseURL
-		if idx := strings.Index(host, "/"); idx >= 0 {
-			host = host[:idx]
-		}
-		if strings.Contains(host, "/") {
-			return nil, fmt.Errorf("otlp: invalid grpc endpoint %q", baseURL)
-		}
-		return setupGRPCExporter(ctx, cfg, host)
+		return setupGRPCExporter(ctx, cfg, parsed)
 	default:
 		return nil, fmt.Errorf("otlp: unsupported exporter %q", cfg.Exporter)
 	}
 }
 
-func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, baseURL string) (log.Exporter, error) {
+func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, error) {
 	options := []otlploghttp.Option{
-		otlploghttp.WithEndpoint(baseURL),
-		otlploghttp.WithURLPath(otlpHTTPLogsPath),
+		otlploghttp.WithEndpoint(strings.TrimRight(endpoint.Host, "/")),
+		otlploghttp.WithURLPath(endpoint.PathWithSuffix("/v1/logs")),
 	}
 
 	if cfg.Timeout > 0 {
 		options = append(options, otlploghttp.WithTimeout(cfg.Timeout))
 	}
-	if cfg.Insecure {
+	if endpoint.Insecure {
 		options = append(options, otlploghttp.WithInsecure())
 	}
 	if headers := cfg.headerMap(); len(headers) > 0 {
@@ -129,15 +119,19 @@ func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, baseURL string) (log
 	return exporter, nil
 }
 
-func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint string) (log.Exporter, error) {
+func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, error) {
+	if endpoint.HasPath() {
+		return nil, fmt.Errorf("otlp: grpc endpoint %q must not include a path", cfg.Endpoint)
+	}
+
 	options := []otlploggrpc.Option{
-		otlploggrpc.WithEndpoint(endpoint),
+		otlploggrpc.WithEndpoint(endpoint.HostWithPath()),
 	}
 
 	if cfg.Timeout > 0 {
 		options = append(options, otlploggrpc.WithTimeout(cfg.Timeout))
 	}
-	if cfg.Insecure {
+	if endpoint.Insecure {
 		options = append(options, otlploggrpc.WithInsecure())
 	} else {
 		options = append(options, otlploggrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))

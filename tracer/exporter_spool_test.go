@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/constant"
+	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -92,7 +93,12 @@ func TestTracerExporterReturnsErrorOnFailure(t *testing.T) {
 		ExportTimeout: 100 * time.Millisecond,
 	}
 
-	exporter, err := setupHTTPExporter(context.Background(), cfg, u.Host)
+	endpoint, err := otlputil.ParseEndpoint(u.Host, cfg.Insecure)
+	if err != nil {
+		t.Fatalf("ParseEndpoint: %v", err)
+	}
+
+	exporter, err := setupHTTPExporter(context.Background(), cfg, endpoint)
 	if err != nil {
 		t.Fatalf("setupHTTPExporter: %v", err)
 	}

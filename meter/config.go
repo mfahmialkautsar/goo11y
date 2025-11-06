@@ -10,7 +10,8 @@ import (
 )
 
 // Config governs metric provider setup.
-// Endpoint should be host:port only (no scheme, no path). Scheme determined by Insecure flag.
+// Endpoint accepts a base URL (host[:port] with optional path). Provided schemes decide TLS mode;
+// when absent, the Insecure flag controls whether HTTP is used.
 type Config struct {
 	Enabled        bool
 	Endpoint       string `validate:"required_if=Enabled true"`

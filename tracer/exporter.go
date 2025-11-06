@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -11,14 +12,14 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-func setupHTTPExporter(ctx context.Context, cfg Config, baseURL string) (sdktrace.SpanExporter, error) {
+func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdktrace.SpanExporter, error) {
 	opts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(baseURL),
+		otlptracehttp.WithEndpoint(endpoint.Host),
+		otlptracehttp.WithURLPath(endpoint.PathWithSuffix("/v1/traces")),
 		otlptracehttp.WithTimeout(cfg.ExportTimeout),
-		otlptracehttp.WithURLPath("/v1/traces"),
 	}
 
-	if cfg.Insecure {
+	if endpoint.Insecure {
 		opts = append(opts, otlptracehttp.WithInsecure())
 	}
 
@@ -38,13 +39,17 @@ func setupHTTPExporter(ctx context.Context, cfg Config, baseURL string) (sdktrac
 	return otlptracehttp.New(ctx, opts...)
 }
 
-func setupGRPCExporter(ctx context.Context, cfg Config, baseURL string) (sdktrace.SpanExporter, error) {
+func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdktrace.SpanExporter, error) {
+	if endpoint.HasPath() {
+		return nil, fmt.Errorf("tracer: grpc endpoint %q must not include a path", cfg.Endpoint)
+	}
+
 	opts := []otlptracegrpc.Option{
-		otlptracegrpc.WithEndpoint(baseURL),
+		otlptracegrpc.WithEndpoint(endpoint.HostWithPath()),
 		otlptracegrpc.WithTimeout(cfg.ExportTimeout),
 	}
 
-	if cfg.Insecure {
+	if endpoint.Insecure {
 		opts = append(opts, otlptracegrpc.WithInsecure())
 	} else {
 		opts = append(opts, otlptracegrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))

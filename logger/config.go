@@ -27,7 +27,9 @@ type Config struct {
 }
 
 // OTLPConfig captures OTLP export settings for log delivery.
-// Endpoint should be host:port only (no scheme, no path). Scheme determined by Insecure flag.
+// Endpoint accepts a base URL (host[:port] with optional path). When a scheme is provided,
+// TLS is inferred automatically (http/grpc => insecure, https/grpcs => secure). Without a
+// scheme, the Insecure flag determines whether TLS is disabled.
 type OTLPConfig struct {
 	Enabled     bool
 	Endpoint    string `validate:"required_if=Enabled true"`

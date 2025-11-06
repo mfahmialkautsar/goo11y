@@ -3,12 +3,12 @@ package goo11y
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
+	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/meter"
@@ -27,7 +27,7 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	defer cancel()
 
 	endpoints := integration.DefaultTargets()
-	logsIngestURL := endpoints.LogsIngestURL
+	logsEndpoint := endpoints.LogsEndpoint
 	lokiQueryBase := endpoints.LokiQueryURL
 	meterEndpoint := endpoints.MetricsEndpoint
 	mimirQueryBase := endpoints.MimirQueryURL
@@ -56,11 +56,6 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	testCase := fmt.Sprintf("global-telemetry-%d", time.Now().UnixNano())
 	logMessage := fmt.Sprintf("global-telemetry-log-%d", time.Now().UnixNano())
 
-	parsedLogs, err := url.Parse(logsIngestURL)
-	if err != nil {
-		t.Fatalf("parse logs ingest url: %v", err)
-	}
-
 	teleCfg := Config{
 		Resource: ResourceConfig{
 			ServiceName: serviceName,
@@ -79,15 +74,13 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 			},
 			OTLP: logger.OTLPConfig{
 				Enabled:  true,
-				Endpoint: parsedLogs.Host,
-				Insecure: parsedLogs.Scheme == "http",
-				Exporter: "http",
+				Endpoint: logsEndpoint,
+				Exporter: constant.ExporterHTTP,
 			},
 		},
 		Tracer: tracer.Config{
 			Enabled:       true,
 			Endpoint:      traceEndpoint,
-			Insecure:      true,
 			ServiceName:   serviceName,
 			ExportTimeout: 5 * time.Second,
 			QueueDir:      traceQueueDir,
@@ -96,7 +89,6 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 		Meter: meter.Config{
 			Enabled:        true,
 			Endpoint:       meterEndpoint,
-			Insecure:       true,
 			ServiceName:    serviceName,
 			ExportInterval: 500 * time.Millisecond,
 			QueueDir:       meterQueueDir,

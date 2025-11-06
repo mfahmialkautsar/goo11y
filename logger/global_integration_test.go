@@ -3,11 +3,11 @@ package logger
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/mfahmialkautsar/goo11y/constant"
 	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
@@ -58,7 +58,7 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 	defer cancel()
 
 	endpoints := testintegration.DefaultTargets()
-	ingestURL := endpoints.LogsIngestURL
+	logsEndpoint := endpoints.LogsEndpoint
 	queryBase := endpoints.LokiQueryURL
 	if err := testintegration.CheckReachable(ctx, queryBase); err != nil {
 		t.Fatalf("loki unreachable at %s: %v", queryBase, err)
@@ -67,10 +67,6 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 	Use(nil)
 	t.Cleanup(func() { Use(nil) })
 
-	parsed, err := url.Parse(ingestURL)
-	if err != nil {
-		t.Fatalf("parse ingest url: %v", err)
-	}
 	serviceName := fmt.Sprintf("goo11y-it-global-logger-%d", time.Now().UnixNano())
 	message := fmt.Sprintf("global-integration-log-%d", time.Now().UnixNano())
 
@@ -82,9 +78,8 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 		Console:     false,
 		OTLP: OTLPConfig{
 			Enabled:  true,
-			Endpoint: parsed.Host,
-			Insecure: parsed.Scheme == "http",
-			Exporter: "http",
+			Endpoint: logsEndpoint,
+			Exporter: constant.ExporterHTTP,
 		},
 	}
 
