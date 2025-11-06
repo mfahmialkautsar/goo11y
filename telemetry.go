@@ -51,9 +51,9 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 			err error
 		)
 		if cfg.Logger.UseGlobal {
-			log, err = logger.Init(cfg.Logger)
+			log, err = logger.Init(ctx, cfg.Logger)
 		} else {
-			log, err = logger.New(cfg.Logger)
+			log, err = logger.New(ctx, cfg.Logger)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("setup logger: %w", err)

@@ -1,484 +1,165 @@
 package logger
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
-	"io"
-	"math"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mfahmialkautsar/goo11y/auth"
+	"go.opentelemetry.io/otel/attribute"
+	otelLog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/sdk/log"
 )
 
-func TestOTLPSendSync(t *testing.T) {
-	received := make(chan *http.Request, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received <- r
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-
-	writer := &otlpWriter{
-		endpoint: srv.URL,
-		headers:  map[string][]string{"X-Test": {"value"}},
-		client:   srv.Client(),
-	}
-
-	if err := writer.sendSync([]byte(`{"message":"ok"}`)); err != nil {
-		t.Fatalf("sendSync: %v", err)
-	}
-
-	req := <-received
-	if req.Method != http.MethodPost {
-		t.Fatalf("unexpected method: %s", req.Method)
-	}
-	if req.Header.Get("X-Test") != "value" {
-		t.Fatalf("unexpected header: %s", req.Header.Get("X-Test"))
-	}
+// fakeExporter captures records emitted via the SDK exporter pipeline.
+type fakeExporter struct {
+	records []log.Record
 }
 
-func TestOTLPSendSyncError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTeapot)
-	}))
-	t.Cleanup(srv.Close)
-
-	writer := &otlpWriter{
-		endpoint: srv.URL,
-		headers:  map[string][]string{},
-		client:   srv.Client(),
+func (f *fakeExporter) Export(_ context.Context, records []log.Record) error {
+	for _, rec := range records {
+		f.records = append(f.records, rec.Clone())
 	}
-
-	if err := writer.sendSync([]byte(`{"message":"fail"}`)); err == nil {
-		t.Fatal("expected remote status error")
-	}
+	return nil
 }
 
-func TestConfigureTransportInsecure(t *testing.T) {
-	transport := configureTransport(true)
-	httpTransport, ok := transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", transport)
-	}
-	if httpTransport.TLSClientConfig == nil || !httpTransport.TLSClientConfig.InsecureSkipVerify {
-		t.Fatalf("expected InsecureSkipVerify true, got %+v", httpTransport.TLSClientConfig)
-	}
-}
+func (f *fakeExporter) Shutdown(context.Context) error { return nil }
 
-func TestConfigureTransportSecure(t *testing.T) {
-	transport := configureTransport(false)
-	httpTransport, ok := transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", transport)
-	}
-	if httpTransport.TLSClientConfig != nil && httpTransport.TLSClientConfig.InsecureSkipVerify {
-		t.Fatal("unexpected InsecureSkipVerify true for secure transport")
-	}
-}
+func (f *fakeExporter) ForceFlush(context.Context) error { return nil }
 
-func TestAnyToAttribute(t *testing.T) {
-	cases := []struct {
-		key   string
-		value any
-	}{
-		{"str", "value"},
-		{"bool", true},
-		{"int", 42.0},
-		{"nan", math.NaN()},
-		{"map", map[string]any{"foo": "bar"}},
-		{"slice", []any{"a", 1}},
-		{"struct", struct{ X string }{X: "x"}},
-	}
+func TestOTLPWriterEmitsRecords(t *testing.T) {
+	exporter := &fakeExporter{}
+	provider := log.NewLoggerProvider(log.WithProcessor(log.NewSimpleProcessor(exporter)))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 
-	for _, tc := range cases {
-		attr, ok := anyToAttribute(tc.key, tc.value)
-		if tc.key == "nan" {
-			if !ok || attr.Key != tc.key {
-				t.Fatalf("expected attribute for %s", tc.key)
-			}
-			continue
-		}
-		if !ok {
-			t.Fatalf("expected attribute for %s", tc.key)
-		}
-		if attr.Key != tc.key {
-			t.Fatalf("unexpected key: %s", attr.Key)
-		}
-	}
+	writer := &otlpWriter{logger: provider.Logger("test")}
 
-	if _, ok := anyToAttribute("nil", nil); ok {
-		t.Fatal("expected nil value to be skipped")
-	}
-}
-
-func TestDuplicateAttributes(t *testing.T) {
-	attrs := []otlpKeyValue{{Key: "a", Value: otlpValue{StringValue: "b"}}}
-	dup := duplicateAttributes(attrs)
-	if len(dup) != 1 || dup[0].Key != "a" {
-		t.Fatalf("unexpected duplicate: %#v", dup)
-	}
-	if &dup[0] == &attrs[0] {
-		t.Fatal("expected copy of attributes")
-	}
-	if duplicateAttributes(nil) != nil {
-		t.Fatal("expected nil copy for empty slice")
-	}
-}
-
-func TestSeverityNumber(t *testing.T) {
-	cases := map[string]int{
-		"trace":   1,
-		"debug":   5,
-		"info":    9,
-		"warn":    13,
-		"error":   17,
-		"fatal":   21,
-		"panic":   21,
-		"unknown": 9,
-	}
-	for level, expected := range cases {
-		if got := severityNumber(level); got != expected {
-			t.Fatalf("level %s expected %d, got %d", level, expected, got)
-		}
-	}
-}
-
-func TestStringKeyValue(t *testing.T) {
-	attr := stringKeyValue("foo", "bar")
-	if attr.Key != "foo" || attr.Value.StringValue != "bar" {
-		t.Fatalf("unexpected key value: %#v", attr)
-	}
-}
-
-func TestOTLPWriterWriteAsync(t *testing.T) {
-	received := make(chan struct{}, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received <- struct{}{}
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-
-	cfg := OTLPConfig{
-		Endpoint: srv.Listener.Addr().String(),
-		Insecure: true,
-		Timeout:  time.Second,
-		Async:    true,
-		UseSpool: false,
-	}
-	writer, err := newOTLPWriter(cfg, "svc", "test")
+	written, err := writer.Write([]byte("plain message"))
 	if err != nil {
-		t.Fatalf("newOTLPWriter: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	ow := writer.(*otlpWriter)
-	ow.endpoint = "http://" + cfg.Endpoint
-	ow.client = srv.Client()
-
-	if _, err := ow.Write([]byte(`{"message":"async"}`)); err != nil {
-		t.Fatalf("Write: %v", err)
+	if written != len("plain message") {
+		t.Fatalf("unexpected byte count: %d", written)
 	}
 
-	select {
-	case <-received:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for async send")
+	if len(exporter.records) != 1 {
+		t.Fatalf("expected one record, got %d", len(exporter.records))
 	}
 }
 
-func TestOTLPWriterWriteSpool(t *testing.T) {
-	received := make(chan struct{}, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received <- struct{}{}
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-
-	tempDir := t.TempDir()
-	cfg := OTLPConfig{
-		Endpoint: srv.Listener.Addr().String(),
-		Insecure: true,
-		Timeout:  time.Second,
-		UseSpool: true,
-		QueueDir: tempDir,
-		Async:    false,
+func TestConfigureExporterRejectsUnknown(t *testing.T) {
+	_, err := configureExporter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Exporter: "udp"})
+	if err == nil {
+		t.Fatal("expected error for unsupported exporter")
 	}
-	writer, err := newOTLPWriter(cfg, "svc", "test")
+}
+
+func TestBuildResourceIncludesServiceAndEnvironment(t *testing.T) {
+	resource, err := buildResource(context.Background(), "svc", "prod")
 	if err != nil {
-		t.Fatalf("newOTLPWriter: %v", err)
+		t.Fatalf("buildResource: %v", err)
 	}
-	ow := writer.(*otlpWriter)
-	ow.endpoint = "http://" + cfg.Endpoint
-	ow.client = srv.Client()
-
-	if _, err := ow.Write([]byte(`{"message":"spool"}`)); err != nil {
-		t.Fatalf("Write: %v", err)
+	attrs := resource.Attributes()
+	attrMap := make(map[attribute.Key]attribute.Value, len(attrs))
+	for _, attr := range attrs {
+		attrMap[attr.Key] = attr.Value
 	}
-
-	select {
-	case <-received:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for spool send")
+	if attrMap[attribute.Key("service.name")].AsString() != "svc" {
+		t.Fatalf("missing service.name attribute: %#v", attrMap)
+	}
+	if attrMap[attribute.Key("deployment.environment")].AsString() != "prod" {
+		t.Fatalf("missing deployment.environment attribute: %#v", attrMap)
 	}
 }
 
-func TestOTLPWriterWriteReturnsErrorOnFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.Copy(io.Discard, r.Body); err != nil {
-			t.Fatalf("io.Copy: %v", err)
-		}
-		if err := r.Body.Close(); err != nil {
-			t.Fatalf("r.Body.Close: %v", err)
-		}
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(srv.Close)
-
-	cfg := OTLPConfig{
-		Endpoint: srv.Listener.Addr().String(),
-		Insecure: true,
-		Timeout:  time.Second,
-		UseSpool: false,
-	}
-
-	writer, err := newOTLPWriter(cfg, "svc", "env")
-	if err != nil {
-		t.Fatalf("newOTLPWriter: %v", err)
-	}
-	ow := writer.(*otlpWriter)
-
-	if _, err := ow.Write([]byte(`{"message":"fail"}`)); err == nil {
-		t.Fatal("expected write error")
-	}
-}
-
-func TestOTLPWriterSpoolRecoversAfterFailure(t *testing.T) {
-	tempDir := t.TempDir()
-
-	var fail atomic.Bool
-	fail.Store(true)
-
-	type captured struct {
-		body   string
-		status int
-	}
-
-	results := make(chan captured, 16)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("ReadAll: %v", err)
-		}
-		if err := r.Body.Close(); err != nil {
-			t.Fatalf("r.Body.Close: %v", err)
-		}
-		status := http.StatusOK
-		if fail.Load() {
-			status = http.StatusServiceUnavailable
-		}
-		w.WriteHeader(status)
-		results <- captured{body: string(data), status: status}
-	}))
-	t.Cleanup(srv.Close)
-
-	recorder := startStderrRecorder(t)
-	defer recorder.Close()
-
-	cfg := OTLPConfig{
-		Endpoint: srv.Listener.Addr().String(),
-		Insecure: true,
-		Timeout:  time.Second,
-		UseSpool: true,
-		QueueDir: tempDir,
-	}
-
-	writer, err := newOTLPWriter(cfg, "svc", "env")
-	if err != nil {
-		t.Fatalf("newOTLPWriter: %v", err)
-	}
-	ow := writer.(*otlpWriter)
-
-	if _, err := ow.Write([]byte(`{"message":"fail"}`)); err != nil {
-		t.Fatalf("first Write: %v", err)
-	}
-
-	waitForQueueFiles(t, tempDir, func(n int) bool { return n > 0 })
-
-	waitForCaptured(t, results, func(c captured) bool {
-		return c.status == http.StatusServiceUnavailable
-	})
-
-	fail.Store(false)
-
-	if _, err := ow.Write([]byte(`{"message":"ok"}`)); err != nil {
-		t.Fatalf("second Write: %v", err)
-	}
-
-	waitForCaptured(t, results, func(c captured) bool {
-		return strings.Contains(c.body, "fail") && c.status == http.StatusOK
-	})
-
-	waitForCaptured(t, results, func(c captured) bool {
-		return strings.Contains(c.body, "ok") && c.status == http.StatusOK
-	})
-
-	waitForQueueFiles(t, tempDir, func(n int) bool { return n == 0 })
-
-	output := recorder.Close()
-	if !strings.Contains(output, "remote status 503") {
-		t.Fatalf("expected spool error log, got %q", output)
-	}
-}
-
-func TestOTLPWriterBuildPayloadUsesNativeFields(t *testing.T) {
-	ts := time.Date(2024, time.June, 1, 12, 30, 15, 123456789, time.UTC)
-	entry, err := json.Marshal(map[string]any{
-		"time":       ts.Format(time.RFC3339Nano),
-		"level":      "warn",
-		"message":    "native-body",
-		traceIDField: "abc123",
-		spanIDField:  "def456",
-		"extra":      42,
-		"flag":       true,
+func TestBuildRecordFromStructuredPayload(t *testing.T) {
+	ts := time.Date(2024, time.June, 2, 15, 4, 5, 900, time.UTC)
+	payload, err := json.Marshal(map[string]any{
+		"time":        ts.Format(time.RFC3339Nano),
+		"level":       "warn",
+		"message":     "structured",
+		traceIDField:  "000000000000000000000000000000ab",
+		spanIDField:   "00000000000000ef",
+		"http.status": 200,
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 
-	ow := &otlpWriter{resourceAttrs: []otlpKeyValue{stringKeyValue("service.name", "svc")}}
-	payload, err := ow.buildPayload(entry)
-	if err != nil {
-		t.Fatalf("buildPayload: %v", err)
+	record, spanCtx := buildRecord(payload)
+	if record.Severity() != otelLog.SeverityWarn {
+		t.Fatalf("unexpected severity: %v", record.Severity())
+	}
+	if record.Body().AsString() != "structured" {
+		t.Fatalf("unexpected body: %s", record.Body().AsString())
 	}
 
-	var export otlpExport
-	if err := json.Unmarshal(payload, &export); err != nil {
-		t.Fatalf("json.Unmarshal: %v", err)
+	if !spanCtx.TraceID().IsValid() {
+		t.Fatal("trace id not propagated")
+	}
+	if !spanCtx.SpanID().IsValid() {
+		t.Fatal("span id not propagated")
 	}
 
-	if len(export.ResourceLogs) != 1 {
-		t.Fatalf("unexpected resource logs: %d", len(export.ResourceLogs))
-	}
-	resource := export.ResourceLogs[0]
-	if len(resource.ScopeLogs) != 1 {
-		t.Fatalf("unexpected scope logs: %d", len(resource.ScopeLogs))
-	}
-	records := resource.ScopeLogs[0].LogRecords
-	if len(records) != 1 {
-		t.Fatalf("unexpected log records: %d", len(records))
-	}
-	record := records[0]
-
-	if record.Body.StringValue != "native-body" {
-		t.Fatalf("unexpected body string: %q", record.Body.StringValue)
-	}
-	if record.SeverityText != "WARN" {
-		t.Fatalf("unexpected severity: %q", record.SeverityText)
-	}
-	if record.TraceID != "abc123" {
-		t.Fatalf("unexpected trace id: %q", record.TraceID)
-	}
-	if record.SpanID != "def456" {
-		t.Fatalf("unexpected span id: %q", record.SpanID)
-	}
-	if record.TimeUnixNano != strconv.FormatInt(ts.UnixNano(), 10) {
-		t.Fatalf("unexpected log timestamp: %s", record.TimeUnixNano)
-	}
-
-	attrs := make(map[string]otlpValue, len(record.Attributes))
-	for _, kv := range record.Attributes {
-		attrs[kv.Key] = kv.Value
-	}
-	if _, ok := attrs["message"]; ok {
-		t.Fatal("message attribute unexpectedly present")
-	}
-	if extra, ok := attrs["extra"]; !ok || extra.IntValue != "42" {
-		t.Fatalf("unexpected extra attribute: %#v", extra)
-	}
-	if flag, ok := attrs["flag"]; !ok || !flag.BoolValue {
-		t.Fatalf("unexpected flag attribute: %#v", flag)
-	}
-	if len(resource.Resource.Attributes) == 0 {
-		t.Fatal("expected resource attributes")
-	}
-}
-
-func waitForCaptured[T any](t *testing.T, ch <-chan T, match func(T) bool) T {
-	t.Helper()
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case item := <-ch:
-			if match(item) {
-				return item
-			}
-		case <-deadline:
-			t.Fatal("timeout waiting for captured request")
+	found := false
+	record.WalkAttributes(func(kv otelLog.KeyValue) bool {
+		if kv.Key == "http.status" {
+			found = true
 		}
-	}
-}
-
-func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
-	t.Helper()
-	deadline := time.After(2 * time.Second)
-	for {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("ReadDir: %v", err)
-		}
-		if done(len(entries)) {
-			return
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("timeout waiting for queue files, entries=%d", len(entries))
-		default:
-			time.Sleep(20 * time.Millisecond)
-		}
-	}
-}
-
-type stderrRecorder struct {
-	orig     *os.File
-	r        *os.File
-	w        *os.File
-	buf      bytes.Buffer
-	done     chan struct{}
-	captured string
-	once     sync.Once
-}
-
-func startStderrRecorder(t *testing.T) *stderrRecorder {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	recorder := &stderrRecorder{
-		orig: os.Stderr,
-		r:    r,
-		w:    w,
-		done: make(chan struct{}),
-	}
-	os.Stderr = w
-	go func() {
-		_, _ = io.Copy(&recorder.buf, r)
-		close(recorder.done)
-	}()
-	return recorder
-}
-
-func (r *stderrRecorder) Close() string {
-	r.once.Do(func() {
-		_ = r.w.Close()
-		<-r.done
-		os.Stderr = r.orig
-		r.captured = r.buf.String()
+		return true
 	})
-	return r.captured
+	if !found {
+		t.Fatal("expected attribute from payload to be retained")
+	}
+}
+
+func TestBuildRecordFallbackBody(t *testing.T) {
+	record, spanCtx := buildRecord([]byte("  plain text  "))
+	if record.Body().AsString() != "plain text" {
+		t.Fatalf("unexpected body: %q", record.Body().AsString())
+	}
+	if record.Severity() != otelLog.SeverityInfo {
+		t.Fatalf("expected default severity info")
+	}
+	if spanCtx.IsValid() {
+		t.Fatal("unexpected span context for plain entry")
+	}
+}
+
+func TestToSeverityMapping(t *testing.T) {
+	cases := map[string]otelLog.Severity{
+		"trace": otelLog.SeverityTrace,
+		"debug": otelLog.SeverityDebug,
+		"info":  otelLog.SeverityInfo,
+		"warn":  otelLog.SeverityWarn,
+		"error": otelLog.SeverityError,
+		"fatal": otelLog.SeverityFatal,
+		"other": otelLog.SeverityInfo,
+	}
+	for input, expected := range cases {
+		if got := toSeverity(input); got != expected {
+			t.Fatalf("%s expected %v, got %v", input, expected, got)
+		}
+	}
+}
+
+func TestOTLPConfigHeaderMerge(t *testing.T) {
+	cfg := OTLPConfig{
+		Headers:     map[string]string{"X-Test": " value "},
+		Credentials: auth.Credentials{BearerToken: "token", Headers: map[string]string{"X-Extra": "extra"}},
+	}
+	headers := cfg.headerMap()
+	if len(headers) != 3 {
+		t.Fatalf("unexpected headers length: %d", len(headers))
+	}
+	if headers["Authorization"] != "Bearer token" {
+		t.Fatalf("credential header not preserved: %v", headers)
+	}
+	if headers["X-Test"] != "value" {
+		t.Fatalf("custom header not merged: %v", headers)
+	}
+	if headers["X-Extra"] != "extra" {
+		t.Fatalf("credential headers not merged: %v", headers)
+	}
 }

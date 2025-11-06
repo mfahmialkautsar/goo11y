@@ -37,7 +37,7 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 		Writers:     []io.Writer{&buf},
 	}
 
-	log, err := logger.New(logCfg)
+	log, err := logger.New(context.Background(), logCfg)
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}

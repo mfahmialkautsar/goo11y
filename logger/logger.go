@@ -64,7 +64,11 @@ var noopTraceProvider = TraceProviderFunc(func(context.Context) (TraceContext, b
 })
 
 // New constructs a Zerolog-backed logger based on the provided configuration.
-func New(cfg Config) (Logger, error) {
+func New(ctx context.Context, cfg Config) (Logger, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	cfg = cfg.ApplyDefaults()
 
 	if err := cfg.Validate(); err != nil {
@@ -93,8 +97,8 @@ func New(cfg Config) (Logger, error) {
 			TimeFormat: defaultConsoleTimeFormat,
 		})
 	}
-	if cfg.OTLP.Endpoint != "" {
-		otlpWriter, err := newOTLPWriter(cfg.OTLP, cfg.ServiceName, cfg.Environment)
+	if cfg.OTLP.Enabled {
+		otlpWriter, err := newOTLPWriter(ctx, cfg.OTLP, cfg.ServiceName, cfg.Environment)
 		if err != nil {
 			return nil, fmt.Errorf("setup otlp writer: %w", err)
 		}

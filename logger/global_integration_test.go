@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 		},
 	}
 
-	log, err := Init(cfg)
+	log, err := Init(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -66,7 +67,10 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 	Use(nil)
 	t.Cleanup(func() { Use(nil) })
 
-	queueDir := t.TempDir()
+	parsed, err := url.Parse(ingestURL)
+	if err != nil {
+		t.Fatalf("parse ingest url: %v", err)
+	}
 	serviceName := fmt.Sprintf("goo11y-it-global-logger-%d", time.Now().UnixNano())
 	message := fmt.Sprintf("global-integration-log-%d", time.Now().UnixNano())
 
@@ -77,12 +81,14 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 		ServiceName: serviceName,
 		Console:     false,
 		OTLP: OTLPConfig{
-			Endpoint: ingestURL,
-			QueueDir: queueDir,
+			Enabled:  true,
+			Endpoint: parsed.Host,
+			Insecure: parsed.Scheme == "http",
+			Exporter: "http",
 		},
 	}
 
-	log, err := Init(cfg)
+	log, err := Init(ctx, cfg)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -91,10 +97,6 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 	}
 
 	WithContext(context.Background()).With("test_case", "global_logger").Info(message)
-
-	if err := testintegration.WaitForEmptyDir(ctx, queueDir, 200*time.Millisecond); err != nil {
-		t.Fatalf("queue did not drain: %v", err)
-	}
 
 	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
 		t.Fatalf("find log entry: %v", err)

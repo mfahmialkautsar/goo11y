@@ -61,9 +61,10 @@ func main() {
 			Enabled: true,
 			Level:   "info",
 			OTLP: logger.OTLPConfig{
+				Enabled:  true,
 				Endpoint: "telemetry.example.com:4318",
-				UseSpool: true,   // disk queue for reliability
-				Async:    true,   // fire-and-forget write path
+				Exporter: "http",
+				Insecure: false,
 			},
 		},
 		Tracer: tracer.Config{
@@ -119,7 +120,7 @@ type Config struct {
 ```
 
 - **ResourceConfig**: `ServiceName` is mandatory. Optional fields (`ServiceVersion`, `Environment`, custom `Attributes`) feed into the OpenTelemetry resource. Detectors, extra `resource.Option` entries, and an `Override` factory allow integration with platform-specific metadata providers. Post-build `Customizers` run sequentially.
-- **logger.Config**: Enables Zerolog with optional console output, daily file writer, and OTLP/HTTP export. `OTLP.Endpoint` accepts either a full URL or host:port and determines scheme from `Insecure`. `UseSpool` stores log batches under `${XDG_CACHE_HOME}/goo11y/logs` by default. `Async` toggles fire-and-forget vs blocking delivery. `Credentials` merges HTTP headers without overwriting caller-specified Authorization headers. `UseGlobal` calls `logger.Init` so `logger.WithContext` and other globals target the configured logger.
+- **logger.Config**: Enables Zerolog with optional console output, daily file writer, and OTLP export. `OTLP.Enabled` toggles remote delivery per environment. `OTLP.Endpoint` accepts a host:port or URL and works for both HTTP (`/otlp/v1/logs`) and gRPC exporters selected via `OTLP.Exporter`. `OTLP.Timeout` drives exporter deadlines, `OTLP.Insecure` disables TLS, and `Credentials` merges headers without overwriting caller-specified Authorization values. `UseGlobal` calls `logger.Init` so `logger.WithContext` and other globals target the configured logger.
 - **tracer.Config**: Requires an endpoint (host:port) and defaults to OTLP/HTTP. Set `Exporter` to `constant.ExporterGRPC` for gRPC exporters. `UseSpool` activates the disk queue for the HTTP pipeline (gRPC ignores it). `SampleRatio` drives parent-based trace sampling. `UseGlobal` calls `tracer.Init`, otherwise `tracer.Setup` still installs the provider into OpenTelemetry globals while returning the handle for explicit shutdown.
 - **meter.Config**: Mirrors tracer configuration for metrics. Choose between HTTP and gRPC exporters via the `Exporter` field. HTTP exporters support disk queueing; gRPC exporters stream directly. `ExportInterval` controls the periodic reader schedule. `Runtime.Enabled` toggles Go runtime gauges (goroutines, heap alloc). `UseGlobal` invokes `meter.Init`.
 - **profiler.Config**: Describes a Pyroscope deployment: full `ServerURL`, `ServiceName`, optional tags, tenant ID, credential headers, and mutex/block profiling rates. `UseGlobal` exposes the controller via `profiler.Global`.
@@ -141,16 +142,16 @@ Goo11y programs the OpenTelemetry globals during setup. That keeps instrumentati
 
 ## Disk Queues and Reliability
 
-Disk-backed queues live under `${XDG_CACHE_HOME}/goo11y/<signal>` (or the system temp directory as a fallback). Each queue persists OTLP requests as timestamped files and retries with exponential backoff (1s minimum, 1m maximum). The HTTP-based exporters (logs, traces HTTP, metrics HTTP) and the logger OTLP writer support spooling. gRPC exporters send synchronously without spooling.
+Disk-backed queues live under `${XDG_CACHE_HOME}/goo11y/<signal>` (or the system temp directory as a fallback). Each queue persists OTLP requests as timestamped files and retries with exponential backoff (1s minimum, 1m maximum). The HTTP-based trace and metric exporters support spooling. gRPC exporters and the logger OTLP writer send synchronously without spooling.
 
-If you disable spooling (`UseSpool: false`), requests go straight to the configured endpoint and follow the exporter retry policy.
+If you disable spooling (`UseSpool: false`), metric and trace requests go straight to the configured endpoint and follow the exporter retry policy.
 
 ## Logging Notes
 
 - Zerolog timestamps use `time.Time` in RFC3339 nanosecond format.
 - Trace correlation injects `trace_id` and `span_id` when a context carries a recording span.
 - When OTLP logging is enabled, Goo11y multiplexes all configured writers through `io.MultiWriter`. If no writer is specified, `stdout` is used by default.
-- Spool warnings for the log exporter are emitted to `stderr` to aid debugging during development and tests.
+- OTLP log delivery is synchronous; exporter errors surface through Zerolog's error output.
 
 ## Metrics and Tracing Notes
 

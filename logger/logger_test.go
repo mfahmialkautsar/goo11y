@@ -32,7 +32,7 @@ func TestLoggerAddsSpanEvents(t *testing.T) {
 		Level:       "debug",
 	}
 
-	log, err := New(cfg)
+	log, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestLoggerSpanEventDefaultName(t *testing.T) {
 		Level:       "info",
 	}
 
-	log, err := New(cfg)
+	log, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 		Writers:     []io.Writer{&buf},
 	}
 
-	log, err := New(cfg)
+	log, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 
 	var second bytes.Buffer
 	cfg.Writers = []io.Writer{&second}
-	logNoCtx, err := New(cfg)
+	logNoCtx, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestFileLoggerWritesDailyFile(t *testing.T) {
 		},
 	}
 
-	log, err := New(cfg)
+	log, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 		Writers:     []io.Writer{&standalone},
 	}
 
-	log, err := New(cfg)
+	log, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 
 	var nilCtx bytes.Buffer
 	cfg.Writers = []io.Writer{&nilCtx}
-	withProvider, err := New(cfg)
+	withProvider, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -300,34 +300,6 @@ func decodeLogLine(t *testing.T, line []byte) map[string]any {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 	return payload
-}
-
-func TestNewFailsWhenQueueDirUnavailable(t *testing.T) {
-	dir := t.TempDir()
-	blocked := filepath.Join(dir, "queue")
-	if err := os.WriteFile(blocked, []byte("locked"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	cfg := Config{
-		Enabled:     true,
-		ServiceName: "test",
-		Environment: "test",
-		Console:     false,
-		Writers:     []io.Writer{io.Discard},
-		OTLP: OTLPConfig{
-			Endpoint: "http://localhost:4318",
-			QueueDir: blocked,
-		},
-	}
-
-	log, err := New(cfg)
-	if err == nil {
-		t.Fatal("expected OTLP setup error")
-	}
-	if log != nil {
-		t.Fatal("expected logger construction to fail")
-	}
 }
 
 func waitForFileEntry(t *testing.T, path, expectedMessage string) map[string]any {

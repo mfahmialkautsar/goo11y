@@ -1,387 +1,307 @@
 package logger
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io"
-	"math"
-	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mfahmialkautsar/goo11y/internal/spool"
+	"github.com/mfahmialkautsar/goo11y/constant"
+	"github.com/mfahmialkautsar/goo11y/internal/attrutil"
+	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	otelLog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
+	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/credentials"
+)
+
+const (
+	otlpHTTPLogsPath      = "/v1/logs"
+	loggerInstrumentation = "github.com/mfahmialkautsar/goo11y/logger"
 )
 
 type otlpWriter struct {
-	endpoint      string
-	headers       map[string][]string
-	queue         *spool.Queue
-	client        *http.Client
-	resourceAttrs []otlpKeyValue
-	async         bool
+	logger otelLog.Logger
 }
 
-func newOTLPWriter(cfg OTLPConfig, serviceName, environment string) (io.Writer, error) {
+func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment string) (*otlpWriter, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	exporter, err := configureExporter(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := buildResource(ctx, serviceName, environment)
+	if err != nil {
+		return nil, err
+	}
+
+	provider := log.NewLoggerProvider(
+		log.WithResource(res),
+		log.WithProcessor(log.NewSimpleProcessor(exporter)),
+	)
+
+	return &otlpWriter{
+		logger: provider.Logger(loggerInstrumentation),
+	}, nil
+}
+
+func (w *otlpWriter) Write(p []byte) (int, error) {
+	if w == nil || w.logger == nil {
+		return len(p), nil
+	}
+
+	record, spanCtx := buildRecord(p)
+
+	emitCtx := context.Background()
+	if spanCtx.IsValid() {
+		emitCtx = trace.ContextWithSpanContext(emitCtx, spanCtx)
+	}
+
+	w.logger.Emit(emitCtx, record)
+	return len(p), nil
+}
+
+func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, error) {
 	endpoint := strings.TrimSpace(cfg.Endpoint)
 	if endpoint == "" {
 		return nil, fmt.Errorf("otlp: endpoint is required")
 	}
 
-	if !strings.Contains(endpoint, "://") {
-		scheme := "https://"
-		if cfg.Insecure {
-			scheme = "http://"
+	baseURL, err := otlputil.NormalizeBaseURL(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("otlp: %w", err)
+	}
+
+	exporter := strings.ToLower(strings.TrimSpace(cfg.Exporter))
+	if exporter == "" {
+		exporter = constant.ExporterHTTP
+	}
+
+	switch exporter {
+	case constant.ExporterHTTP:
+		return setupHTTPExporter(ctx, cfg, baseURL)
+	case constant.ExporterGRPC:
+		host := baseURL
+		if idx := strings.Index(host, "/"); idx >= 0 {
+			host = host[:idx]
 		}
-		endpoint = scheme + endpoint
-	}
-
-	var queue *spool.Queue
-	var err error
-	if cfg.UseSpool {
-		queue, err = spool.NewWithErrorLogger(cfg.QueueDir, spool.ErrorLoggerFunc(logOTLPSpoolError))
-		if err != nil {
-			return nil, err
+		if strings.Contains(host, "/") {
+			return nil, fmt.Errorf("otlp: invalid grpc endpoint %q", baseURL)
 		}
+		return setupGRPCExporter(ctx, cfg, host)
+	default:
+		return nil, fmt.Errorf("otlp: unsupported exporter %q", cfg.Exporter)
+	}
+}
+
+func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, baseURL string) (log.Exporter, error) {
+	options := []otlploghttp.Option{
+		otlploghttp.WithEndpoint(baseURL),
+		otlploghttp.WithURLPath(otlpHTTPLogsPath),
 	}
 
-	transport := configureTransport(cfg.Insecure)
-	client := &http.Client{
-		Timeout:   cfg.Timeout,
-		Transport: transport,
+	if cfg.Timeout > 0 {
+		options = append(options, otlploghttp.WithTimeout(cfg.Timeout))
+	}
+	if cfg.Insecure {
+		options = append(options, otlploghttp.WithInsecure())
+	}
+	if headers := cfg.headerMap(); len(headers) > 0 {
+		options = append(options, otlploghttp.WithHeaders(headers))
 	}
 
-	if cfg.UseSpool {
-		queue.Start(context.Background(), spool.HTTPHandler(client))
+	options = append(options, otlploghttp.WithRetry(otlploghttp.RetryConfig{Enabled: true}))
+
+	exporter, err := otlploghttp.New(ctx, options...)
+	if err != nil {
+		return nil, fmt.Errorf("otlp http exporter: %w", err)
+	}
+	return exporter, nil
+}
+
+func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint string) (log.Exporter, error) {
+	options := []otlploggrpc.Option{
+		otlploggrpc.WithEndpoint(endpoint),
 	}
 
-	headers := cfg.headerMap()
+	if cfg.Timeout > 0 {
+		options = append(options, otlploggrpc.WithTimeout(cfg.Timeout))
+	}
+	if cfg.Insecure {
+		options = append(options, otlploggrpc.WithInsecure())
+	} else {
+		options = append(options, otlploggrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))
+	}
+	if headers := cfg.headerMap(); len(headers) > 0 {
+		options = append(options, otlploggrpc.WithHeaders(headers))
+	}
 
-	resourceAttrs := make([]otlpKeyValue, 0, 4)
+	options = append(options, otlploggrpc.WithRetry(otlploggrpc.RetryConfig{Enabled: true}))
+
+	exporter, err := otlploggrpc.New(ctx, options...)
+	if err != nil {
+		return nil, fmt.Errorf("otlp grpc exporter: %w", err)
+	}
+	return exporter, nil
+}
+
+func buildResource(ctx context.Context, serviceName, environment string) (*resource.Resource, error) {
+	attrs := make([]attribute.KeyValue, 0, 5)
 	if serviceName != "" {
-		resourceAttrs = append(resourceAttrs,
-			stringKeyValue("service.name", serviceName),
-			stringKeyValue("service_name", serviceName),
+		attrs = append(attrs,
+			semconv.ServiceNameKey.String(serviceName),
+			attribute.String("service_name", serviceName),
 		)
 	}
 	if environment != "" {
-		resourceAttrs = append(resourceAttrs,
-			stringKeyValue("deployment.environment", environment),
-			stringKeyValue("environment", environment),
+		attrs = append(attrs,
+			semconv.DeploymentEnvironmentNameKey.String(environment),
+			attribute.String("deployment.environment", environment),
+			attribute.String("environment", environment),
 		)
 	}
 
-	return &otlpWriter{
-		endpoint:      endpoint,
-		headers:       headers,
-		queue:         queue,
-		client:        client,
-		resourceAttrs: resourceAttrs,
-		async:         cfg.Async,
-	}, nil
-}
-
-func (ow *otlpWriter) Write(p []byte) (int, error) {
-	if ow == nil {
-		return len(p), nil
-	}
-	payload, err := ow.buildPayload(p)
-	if err != nil {
-		return 0, err
-	}
-
-	if ow.queue != nil {
-		request := &spool.HTTPRequest{
-			Method: http.MethodPost,
-			URL:    ow.endpoint,
-			Header: copyHeaders(ow.headers),
-			Body:   payload,
-		}
-
-		envelope, err := request.Marshal()
+	userResource := resource.Empty()
+	if len(attrs) > 0 {
+		var err error
+		userResource, err = resource.New(ctx, resource.WithAttributes(attrs...))
 		if err != nil {
-			return 0, err
+			return nil, fmt.Errorf("otlp resource: %w", err)
 		}
-
-		if _, err := ow.queue.Enqueue(envelope); err != nil {
-			return 0, err
-		}
-		ow.queue.Notify()
-		return len(p), nil
 	}
 
-	if ow.async {
-		go func() {
-			if err := ow.sendSync(payload); err != nil {
-				logOTLPAsyncError(err)
-			}
-		}()
-		return len(p), nil
-	}
-
-	return len(p), ow.sendSync(payload)
-}
-
-// logOTLPSpoolError writes spool warnings to stderr for visibility during development and tests.
-func logOTLPSpoolError(err error) {
-	if err == nil {
-		return
-	}
-	_, _ = fmt.Fprintf(os.Stderr, "[otlp-spool] %v\n", err)
-}
-
-func logOTLPAsyncError(err error) {
-	if err == nil {
-		return
-	}
-	_, _ = fmt.Fprintf(os.Stderr, "[otlp-async] %v\n", err)
-}
-
-func (ow *otlpWriter) sendSync(payload []byte) error {
-	req, err := http.NewRequest(http.MethodPost, ow.endpoint, bytes.NewReader(payload))
+	merged, err := resource.Merge(resource.Default(), userResource)
 	if err != nil {
-		return fmt.Errorf("otlp: create request: %w", err)
+		return nil, fmt.Errorf("otlp resource merge: %w", err)
+	}
+	return merged, nil
+}
+
+func buildRecord(entry []byte) (otelLog.Record, trace.SpanContext) {
+	record := otelLog.Record{}
+	observed := time.Now()
+	record.SetObservedTimestamp(observed)
+	record.SetTimestamp(observed)
+	record.SetSeverityText("INFO")
+	record.SetSeverity(otelLog.SeverityInfo)
+	record.SetBody(otelLog.StringValue(strings.TrimSpace(string(entry))))
+
+	var spanCtx trace.SpanContext
+
+	var payload map[string]any
+	if err := json.Unmarshal(entry, &payload); err != nil {
+		return record, spanCtx
 	}
 
-	for key, values := range ow.headers {
-		for _, value := range values {
-			req.Header.Add(key, value)
+	if ts, ok := payload["time"].(string); ok {
+		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			record.SetTimestamp(parsed)
 		}
 	}
 
-	resp, err := ow.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("otlp: send request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("otlp: remote status %d", resp.StatusCode)
+	if msg, ok := payload["message"].(string); ok {
+		record.SetBody(otelLog.StringValue(msg))
 	}
 
-	return nil
-}
-
-func (ow *otlpWriter) buildPayload(entry []byte) ([]byte, error) {
-	now := time.Now()
-
-	record := otlpLogRecord{
-		TimeUnixNano:         strconv.FormatInt(now.UnixNano(), 10),
-		ObservedTimeUnixNano: strconv.FormatInt(now.UnixNano(), 10),
-		SeverityText:         "INFO",
-		SeverityNumber:       severityNumber("INFO"),
+	if lvl, ok := payload["level"].(string); ok {
+		severityText := strings.ToUpper(lvl)
+		record.SetSeverityText(severityText)
+		record.SetSeverity(toSeverity(severityText))
 	}
 
-	attributes := make([]otlpKeyValue, 0)
-	message := ""
-
-	var parsed map[string]any
-	if err := json.Unmarshal(entry, &parsed); err == nil {
-		if ts, ok := parsed["time"].(string); ok {
-			if parsedTime, perr := time.Parse(time.RFC3339Nano, ts); perr == nil {
-				record.TimeUnixNano = strconv.FormatInt(parsedTime.UnixNano(), 10)
-			}
+	var traceID trace.TraceID
+	if traceVal, ok := payload[traceIDField].(string); ok {
+		if id, err := trace.TraceIDFromHex(traceVal); err == nil {
+			traceID = id
 		}
-		if lvl, ok := parsed["level"].(string); ok {
-			upper := strings.ToUpper(lvl)
-			if upper != "" {
-				record.SeverityText = upper
-				record.SeverityNumber = severityNumber(upper)
-			}
+	}
+	var spanID trace.SpanID
+	if spanVal, ok := payload[spanIDField].(string); ok {
+		if id, err := trace.SpanIDFromHex(spanVal); err == nil {
+			spanID = id
 		}
-		if traceID, ok := parsed[traceIDField].(string); ok {
-			record.TraceID = traceID
+	}
+	if traceID.IsValid() {
+		cfg := trace.SpanContextConfig{
+			TraceID:    traceID,
+			TraceFlags: trace.FlagsSampled,
 		}
-		if spanID, ok := parsed[spanIDField].(string); ok {
-			record.SpanID = spanID
+		if spanID.IsValid() {
+			cfg.SpanID = spanID
 		}
-		if msg, ok := parsed["message"].(string); ok {
-			message = msg
-		}
-
-		for key, value := range parsed {
-			if key == "time" || key == "level" || key == "message" || key == traceIDField || key == spanIDField || key == "service_name" {
-				continue
-			}
-			if attr, ok := anyToAttribute(key, value); ok {
-				attributes = append(attributes, attr)
-			}
-		}
-	} else {
-		message = string(entry)
+		spanCtx = trace.NewSpanContext(cfg)
 	}
 
-	if message == "" {
-		message = string(entry)
-	}
-	record.Body = otlpValue{StringValue: message}
-
-	if len(attributes) > 0 {
-		record.Attributes = attributes
+	for _, attr := range attributesFromPayload(payload) {
+		record.AddAttributes(toLogKeyValue(attr))
 	}
 
-	payload := otlpExport{
-		ResourceLogs: []otlpResourceLogs{
-			{
-				Resource: otlpResource{Attributes: duplicateAttributes(ow.resourceAttrs)},
-				ScopeLogs: []otlpScopeLogs{
-					{
-						Scope:      otlpScope{Name: "github.com/mfahmialkautsar/goo11y/logger"},
-						LogRecords: []otlpLogRecord{record},
-					},
-				},
-			},
-		},
-	}
-
-	return json.Marshal(payload)
+	return record, spanCtx
 }
 
-func configureTransport(insecure bool) http.RoundTripper {
-	transport := cloneDefaultTransport()
-	if !insecure {
-		return transport
-	}
-	if base, ok := transport.(*http.Transport); ok {
-		clone := base.Clone()
-		if clone.TLSClientConfig == nil {
-			clone.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		} else {
-			cfg := clone.TLSClientConfig.Clone()
-			cfg.InsecureSkipVerify = true
-			clone.TLSClientConfig = cfg
+func attributesFromPayload(payload map[string]any) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, len(payload))
+	for key, value := range payload {
+		if skipField(key) {
+			continue
 		}
-		return clone
-	}
-	return transport
-}
-
-func cloneDefaultTransport() http.RoundTripper {
-	if base, ok := http.DefaultTransport.(*http.Transport); ok {
-		return base.Clone()
-	}
-	return http.DefaultTransport
-}
-
-func copyHeaders(src map[string][]string) map[string][]string {
-	dup := make(map[string][]string, len(src))
-	for key, values := range src {
-		vv := make([]string, len(values))
-		copy(vv, values)
-		dup[key] = vv
-	}
-	return dup
-}
-
-type otlpExport struct {
-	ResourceLogs []otlpResourceLogs `json:"resourceLogs"`
-}
-
-type otlpResourceLogs struct {
-	Resource  otlpResource    `json:"resource"`
-	ScopeLogs []otlpScopeLogs `json:"scopeLogs"`
-}
-
-type otlpResource struct {
-	Attributes []otlpKeyValue `json:"attributes,omitempty"`
-}
-
-type otlpScopeLogs struct {
-	Scope      otlpScope       `json:"scope,omitempty"`
-	LogRecords []otlpLogRecord `json:"logRecords"`
-}
-
-type otlpScope struct {
-	Name    string `json:"name,omitempty"`
-	Version string `json:"version,omitempty"`
-}
-
-type otlpLogRecord struct {
-	TimeUnixNano         string         `json:"timeUnixNano,omitempty"`
-	ObservedTimeUnixNano string         `json:"observedTimeUnixNano,omitempty"`
-	SeverityText         string         `json:"severityText,omitempty"`
-	SeverityNumber       int            `json:"severityNumber,omitempty"`
-	Body                 otlpValue      `json:"body"`
-	Attributes           []otlpKeyValue `json:"attributes,omitempty"`
-	TraceID              string         `json:"traceId,omitempty"`
-	SpanID               string         `json:"spanId,omitempty"`
-}
-
-type otlpKeyValue struct {
-	Key   string    `json:"key"`
-	Value otlpValue `json:"value"`
-}
-
-type otlpValue struct {
-	StringValue string  `json:"stringValue,omitempty"`
-	BoolValue   bool    `json:"boolValue,omitempty"`
-	IntValue    string  `json:"intValue,omitempty"`
-	DoubleValue float64 `json:"doubleValue,omitempty"`
-}
-
-func anyToAttribute(key string, value any) (otlpKeyValue, bool) {
-	switch v := value.(type) {
-	case string:
-		return otlpKeyValue{Key: key, Value: otlpValue{StringValue: v}}, true
-	case bool:
-		return otlpKeyValue{Key: key, Value: otlpValue{BoolValue: v}}, true
-	case float64:
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return otlpKeyValue{Key: key, Value: otlpValue{StringValue: fmt.Sprintf("%v", v)}}, true
+		if attr, ok := attrutil.FromValue(key, value); ok {
+			attrs = append(attrs, attr)
 		}
-		if math.Trunc(v) == v {
-			return otlpKeyValue{Key: key, Value: otlpValue{IntValue: strconv.FormatInt(int64(v), 10)}}, true
-		}
-		return otlpKeyValue{Key: key, Value: otlpValue{DoubleValue: v}}, true
-	case nil:
-		return otlpKeyValue{}, false
-	case map[string]any, []any:
-		marshaled, err := json.Marshal(v)
-		if err != nil {
-			return otlpKeyValue{Key: key, Value: otlpValue{StringValue: fmt.Sprintf("%v", v)}}, true
-		}
-		return otlpKeyValue{Key: key, Value: otlpValue{StringValue: string(marshaled)}}, true
+	}
+	return attrs
+}
+
+func skipField(key string) bool {
+	switch key {
+	case "time", "level", "message", traceIDField, spanIDField, "service_name":
+		return true
 	default:
-		return otlpKeyValue{Key: key, Value: otlpValue{StringValue: fmt.Sprint(v)}}, true
+		return false
 	}
 }
 
-func duplicateAttributes(attrs []otlpKeyValue) []otlpKeyValue {
-	if len(attrs) == 0 {
-		return nil
+func toLogKeyValue(attr attribute.KeyValue) otelLog.KeyValue {
+	key := string(attr.Key)
+	switch attr.Value.Type() {
+	case attribute.BOOL:
+		return otelLog.Bool(key, attr.Value.AsBool())
+	case attribute.INT64:
+		return otelLog.Int64(key, attr.Value.AsInt64())
+	case attribute.FLOAT64:
+		return otelLog.Float64(key, attr.Value.AsFloat64())
+	case attribute.STRING:
+		return otelLog.String(key, attr.Value.AsString())
+	default:
+		return otelLog.String(key, attr.Value.Emit())
 	}
-	dup := make([]otlpKeyValue, len(attrs))
-	copy(dup, attrs)
-	return dup
 }
 
-func stringKeyValue(key, value string) otlpKeyValue {
-	return otlpKeyValue{Key: key, Value: otlpValue{StringValue: value}}
-}
-
-func severityNumber(level string) int {
+func toSeverity(level string) otelLog.Severity {
 	switch strings.ToUpper(level) {
 	case "TRACE":
-		return 1
+		return otelLog.SeverityTrace
 	case "DEBUG":
-		return 5
+		return otelLog.SeverityDebug
 	case "INFO":
-		return 9
+		return otelLog.SeverityInfo
 	case "WARN", "WARNING":
-		return 13
+		return otelLog.SeverityWarn
 	case "ERROR":
-		return 17
+		return otelLog.SeverityError
 	case "FATAL", "PANIC":
-		return 21
+		return otelLog.SeverityFatal
 	default:
-		return 9
+		return otelLog.SeverityInfo
 	}
 }

@@ -26,16 +26,15 @@ type Config struct {
 	UseGlobal   bool
 }
 
-// OTLPConfig captures OTLP/HTTP settings for log export.
-// Endpoint is a full URL (scheme + host + port + path). Scheme optional, added based on Insecure flag.
+// OTLPConfig captures OTLP export settings for log delivery.
+// Endpoint should be host:port only (no scheme, no path). Scheme determined by Insecure flag.
 type OTLPConfig struct {
-	Endpoint    string
+	Enabled     bool
+	Endpoint    string `validate:"required_if=Enabled true"`
 	Insecure    bool
 	Headers     map[string]string
 	Timeout     time.Duration `default:"5s" validate:"omitempty,gt=0"`
-	QueueDir    string
-	UseSpool    bool `default:"true"`
-	Async       bool `default:"true"`
+	Exporter    string        `default:"http" validate:"oneof=http grpc"`
 	Credentials auth.Credentials
 }
 
@@ -48,9 +47,6 @@ type FileConfig struct {
 
 func (c Config) withDefaults() Config {
 	_ = defaults.Set(&c)
-	if c.OTLP.QueueDir == "" {
-		c.OTLP.QueueDir = fileutil.DefaultQueueDir("logs")
-	}
 	if c.File.Enabled && c.File.Directory == "" {
 		c.File.Directory = fileutil.DefaultQueueDir("file-logs")
 	}
@@ -71,32 +67,34 @@ func (c Config) Validate() error {
 	return validate.Struct(c)
 }
 
-func (c OTLPConfig) headerMap() map[string][]string {
-	headers := map[string][]string{
-		"Content-Type": {"application/json"},
-	}
-
-	merge := func(values map[string]string) {
+func (c OTLPConfig) headerMap() map[string]string {
+	merge := func(dst map[string]string, values map[string]string) {
 		for key, value := range values {
 			trimmedKey := strings.TrimSpace(key)
 			trimmedValue := strings.TrimSpace(value)
 			if trimmedKey == "" || trimmedValue == "" {
 				continue
 			}
-			if existing, ok := headers[trimmedKey]; ok && len(existing) > 0 {
-				if strings.EqualFold(trimmedKey, "authorization") {
-					continue
-				}
+			if _, exists := dst[trimmedKey]; exists && strings.EqualFold(trimmedKey, "authorization") {
+				continue
 			}
-			headers[trimmedKey] = []string{trimmedValue}
+			dst[trimmedKey] = trimmedValue
 		}
 	}
 
+	var headers map[string]string
+
 	if credHeaders := c.Credentials.HeaderMap(); len(credHeaders) > 0 {
-		merge(credHeaders)
+		if headers == nil {
+			headers = make(map[string]string, len(credHeaders))
+		}
+		merge(headers, credHeaders)
 	}
 	if len(c.Headers) > 0 {
-		merge(c.Headers)
+		if headers == nil {
+			headers = make(map[string]string, len(c.Headers))
+		}
+		merge(headers, c.Headers)
 	}
 
 	return headers

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestFileLoggingIntegration(t *testing.T) {
 		},
 	}
 
-	log, err := New(cfg)
+	log, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -68,7 +69,10 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 		t.Fatalf("loki unreachable at %s: %v", queryBase, err)
 	}
 
-	queueDir := t.TempDir()
+	parsed, err := url.Parse(ingestURL)
+	if err != nil {
+		t.Fatalf("parse ingest url: %v", err)
+	}
 	serviceName := fmt.Sprintf("goo11y-it-logger-%d", time.Now().UnixNano())
 	message := fmt.Sprintf("integration-log-%d", time.Now().UnixNano())
 
@@ -79,12 +83,14 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 		ServiceName: serviceName,
 		Console:     false,
 		OTLP: OTLPConfig{
-			Endpoint: ingestURL,
-			QueueDir: queueDir,
+			Enabled:  true,
+			Endpoint: parsed.Host,
+			Insecure: parsed.Scheme == "http",
+			Exporter: "http",
 		},
 	}
 
-	log, err := New(cfg)
+	log, err := New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -93,10 +99,6 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 	}
 
 	log.WithContext(context.Background()).With("test_case", "logger").Info(message)
-
-	if err := testintegration.WaitForEmptyDir(ctx, queueDir, 200*time.Millisecond); err != nil {
-		t.Fatalf("queue did not drain: %v", err)
-	}
 
 	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
 		t.Fatalf("find log entry: %v", err)
@@ -117,7 +119,7 @@ func TestLoggerSpanEventsIntegration(t *testing.T) {
 		Writers:     []io.Writer{discard},
 	}
 
-	log, err := New(cfg)
+	log, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -57,7 +57,6 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		}
 	}
 
-	loggerQueueDir := t.TempDir()
 	loggerFileDir := t.TempDir()
 	meterQueueDir := t.TempDir()
 	traceQueueDir := t.TempDir()
@@ -66,6 +65,11 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	metricName := fmt.Sprintf("go_o11y_trace_metric_total_%d", time.Now().UnixNano())
 	testCase := fmt.Sprintf("telemetry-trace-%d", time.Now().UnixNano())
 	logMessage := fmt.Sprintf("telemetry-log-%d", time.Now().UnixNano())
+
+	parsedLogs, err := url.Parse(logsIngestURL)
+	if err != nil {
+		t.Fatalf("parse logs ingest url: %v", err)
+	}
 
 	teleCfg := Config{
 		Resource: ResourceConfig{
@@ -83,8 +87,10 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 				Buffer:    8,
 			},
 			OTLP: logger.OTLPConfig{
-				Endpoint: logsIngestURL,
-				QueueDir: loggerQueueDir,
+				Enabled:  true,
+				Endpoint: parsedLogs.Host,
+				Insecure: parsedLogs.Scheme == "http",
+				Exporter: "http",
 			},
 		},
 		Tracer: tracer.Config{
@@ -174,9 +180,6 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	}
 	tele = nil
 
-	if err := integration.WaitForEmptyDir(ctx, loggerQueueDir, 200*time.Millisecond); err != nil {
-		t.Fatalf("logger queue did not drain: %v", err)
-	}
 	if err := integration.WaitForEmptyDir(ctx, meterQueueDir, 200*time.Millisecond); err != nil {
 		t.Fatalf("meter queue did not drain: %v", err)
 	}

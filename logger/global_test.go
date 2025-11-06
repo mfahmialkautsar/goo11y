@@ -101,7 +101,7 @@ func TestInitSetsGlobalLogger(t *testing.T) {
 		Writers:     []io.Writer{&buf},
 	}
 
-	log, err := Init(cfg)
+	log, err := Init(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
 		Writers:     []io.Writer{&buf},
 	}
 
-	log, err := New(cfg)
+	log, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

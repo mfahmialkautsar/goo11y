@@ -34,8 +34,8 @@ func init() {
 }
 
 // Init constructs a logger using New and makes it globally available via package-level helpers.
-func Init(cfg Config) (Logger, error) {
-	log, err := New(cfg)
+func Init(ctx context.Context, cfg Config) (Logger, error) {
+	log, err := New(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
