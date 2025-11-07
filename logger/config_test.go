@@ -59,3 +59,10 @@ func TestConfigApplyDefaultsAssignsQueueDir(t *testing.T) {
 		t.Fatal("expected OTLP queue dir to be set")
 	}
 }
+
+func TestOTLPDefaultsDisableSpool(t *testing.T) {
+	defaulted := Config{}.ApplyDefaults()
+	if defaulted.OTLP.UseSpool {
+		t.Fatal("expected OTLP spool to be disabled by default")
+	}
+}

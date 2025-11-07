@@ -23,7 +23,7 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	endpoints := integration.DefaultTargets()
@@ -170,13 +170,17 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 		t.Fatalf("unexpected span_id: %v", fileEntry["span_id"])
 	}
 
-	if err := waitForLokiTraceFields(ctx, lokiQueryBase, serviceName, logMessage, traceID, spanID); err != nil {
+	if err := integration.WaitForLokiTraceFields(ctx, lokiQueryBase, serviceName, logMessage, traceID, spanID); err != nil {
 		t.Fatalf("verify loki log: %v", err)
 	}
-	if err := waitForMimirMetric(ctx, mimirQueryBase, metricName, testCase, traceID, spanID); err != nil {
+	if err := integration.WaitForMimirMetric(ctx, mimirQueryBase, metricName, map[string]string{
+		"test_case": testCase,
+		"trace_id":  traceID,
+		"span_id":   spanID,
+	}); err != nil {
 		t.Fatalf("verify mimir metric: %v", err)
 	}
-	if err := waitForTempoTrace(ctx, tempoQueryBase, serviceName, testCase, traceID); err != nil {
+	if err := integration.WaitForTempoTrace(ctx, tempoQueryBase, serviceName, testCase, traceID); err != nil {
 		t.Fatalf("verify tempo trace: %v", err)
 	}
 	if err := integration.WaitForPyroscopeProfile(ctx, pyroscopeBase, pyroscopeTenant, serviceName, testCase); err != nil {

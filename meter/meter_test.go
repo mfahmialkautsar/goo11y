@@ -37,3 +37,10 @@ func TestSetupRequiresEndpointWhenEnabled(t *testing.T) {
 		t.Fatal("expected error for missing endpoint")
 	}
 }
+
+func TestMeterDefaultsDisableSpool(t *testing.T) {
+	defaulted := Config{}.ApplyDefaults()
+	if defaulted.UseSpool {
+		t.Fatal("expected meter spool to be disabled by default")
+	}
+}

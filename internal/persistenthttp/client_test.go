@@ -8,12 +8,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/internal/spool"
+	"github.com/mfahmialkautsar/goo11y/internal/testutil"
 )
 
 func TestClientFlushesRequests(t *testing.T) {
@@ -213,8 +213,8 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 	}))
 	defer server.Close()
 
-	recorder := startStderrRecorder(t)
-	defer recorder.Close()
+	recorder := testutil.StartStderrRecorder(t)
+	t.Cleanup(func() { _ = recorder.Close() })
 
 	client, err := NewClient(queueDir, 100*time.Millisecond)
 	if err != nil {
@@ -270,7 +270,7 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 
 	waitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
 
-	time.Sleep(100 * time.Millisecond)
+	testutil.WaitForLogSubstring(t, recorder, "remote status 503", 2*time.Second)
 	output := recorder.Close()
 	if !strings.Contains(output, "remote status 503") {
 		t.Fatalf("expected spool error log, got %q", output)
@@ -310,44 +310,4 @@ func waitForResult[T any](t *testing.T, ch <-chan T, match func(T) bool) T {
 			t.Fatal("timeout waiting for result")
 		}
 	}
-}
-
-type stderrRecorder struct {
-	orig     *os.File
-	r        *os.File
-	w        *os.File
-	buf      bytes.Buffer
-	done     chan struct{}
-	captured string
-	once     sync.Once
-}
-
-func startStderrRecorder(t *testing.T) *stderrRecorder {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	recorder := &stderrRecorder{
-		orig: os.Stderr,
-		r:    r,
-		w:    w,
-		done: make(chan struct{}),
-	}
-	os.Stderr = w
-	go func() {
-		_, _ = io.Copy(&recorder.buf, r)
-		close(recorder.done)
-	}()
-	return recorder
-}
-
-func (r *stderrRecorder) Close() string {
-	r.once.Do(func() {
-		_ = r.w.Close()
-		<-r.done
-		os.Stderr = r.orig
-		r.captured = r.buf.String()
-	})
-	return r.captured
 }

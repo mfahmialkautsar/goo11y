@@ -15,9 +15,16 @@ type StderrRecorder struct {
 	r        *os.File
 	w        *os.File
 	buf      strings.Builder
+	bufMu    sync.Mutex
 	done     chan struct{}
 	captured string
 	once     sync.Once
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) {
+	return f(p)
 }
 
 // StartStderrRecorder redirects stderr to an in-memory buffer until Close is called.
@@ -38,10 +45,15 @@ func StartStderrRecorder(t testing.TB) *StderrRecorder {
 
 	os.Stderr = w
 
-	go func() {
-		_, _ = io.Copy(&recorder.buf, r)
-		close(recorder.done)
-	}()
+	go func(rec *StderrRecorder) {
+		writer := writerFunc(func(p []byte) (int, error) {
+			rec.bufMu.Lock()
+			defer rec.bufMu.Unlock()
+			return rec.buf.Write(p)
+		})
+		_, _ = io.Copy(writer, rec.r)
+		close(rec.done)
+	}(recorder)
 
 	return recorder
 }
@@ -56,10 +68,48 @@ func (r *StderrRecorder) Close() string {
 		_ = r.w.Close()
 		<-r.done
 		os.Stderr = r.orig
+		r.bufMu.Lock()
 		r.captured = r.buf.String()
+		r.bufMu.Unlock()
 	})
 
 	return r.captured
+}
+
+// Snapshot returns the currently buffered stderr content without closing the recorder.
+func (r *StderrRecorder) Snapshot() string {
+	if r == nil {
+		return ""
+	}
+	r.bufMu.Lock()
+	defer r.bufMu.Unlock()
+	return r.buf.String()
+}
+
+// WaitForLogSubstring polls stderr until the substring is observed or the timeout elapses.
+func WaitForLogSubstring(t testing.TB, recorder *StderrRecorder, substr string, timeout time.Duration) string {
+	t.Helper()
+
+	if recorder == nil {
+		t.Fatalf("nil stderr recorder")
+	}
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeoutCh := time.After(timeout)
+	for {
+		snapshot := recorder.Snapshot()
+		if strings.Contains(snapshot, substr) {
+			return snapshot
+		}
+		select {
+		case <-timeoutCh:
+			recorder.Close()
+			t.Fatalf("timeout waiting for stderr substring %q; last output %q", substr, snapshot)
+		case <-ticker.C:
+		}
+	}
 }
 
 // WaitForQueueFiles polls the provided directory until the predicate is satisfied or a timeout occurs.

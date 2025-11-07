@@ -180,7 +180,7 @@ func TestTracerSpoolRecoversAfterFailure(t *testing.T) {
 	testutil.WaitForStatus(t, statusCh, http.StatusOK)
 	testutil.WaitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
 
-	time.Sleep(100 * time.Millisecond)
+	testutil.WaitForLogSubstring(t, recorder, "remote status 503", time.Second)
 	output := recorder.Close()
 	if !strings.Contains(output, "remote status 503") {
 		t.Fatalf("expected spool error log, got %q", output)

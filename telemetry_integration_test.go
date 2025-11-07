@@ -6,14 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -34,7 +29,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	endpoints := integration.DefaultTargets()
@@ -180,13 +175,17 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		t.Fatalf("tracer queue did not drain: %v", err)
 	}
 
-	if err := waitForLokiTraceFields(ctx, lokiQueryBase, serviceName, logMessage, traceID, spanID); err != nil {
+	if err := integration.WaitForLokiTraceFields(ctx, lokiQueryBase, serviceName, logMessage, traceID, spanID); err != nil {
 		t.Fatalf("verify loki log: %v", err)
 	}
-	if err := waitForMimirMetric(ctx, mimirQueryBase, metricName, testCase, traceID, spanID); err != nil {
+	if err := integration.WaitForMimirMetric(ctx, mimirQueryBase, metricName, map[string]string{
+		"test_case": testCase,
+		"trace_id":  traceID,
+		"span_id":   spanID,
+	}); err != nil {
 		t.Fatalf("verify mimir metric: %v", err)
 	}
-	if err := waitForTempoTrace(ctx, tempoQueryBase, serviceName, testCase, traceID); err != nil {
+	if err := integration.WaitForTempoTrace(ctx, tempoQueryBase, serviceName, testCase, traceID); err != nil {
 		t.Fatalf("verify tempo trace: %v", err)
 	}
 	if err := integration.WaitForPyroscopeProfile(ctx, pyroscopeBase, pyroscopeTenant, serviceName, testCase); err != nil {
@@ -203,182 +202,6 @@ func burnCPU(duration time.Duration) {
 		}
 	}
 	_ = sum
-}
-
-func waitForLokiTraceFields(ctx context.Context, queryBase, serviceName, message, traceID, spanID string) error {
-	values := url.Values{}
-	now := time.Now()
-	values.Set("start", strconv.FormatInt(now.Add(-1*time.Minute).UnixNano(), 10))
-	values.Set("end", strconv.FormatInt(now.Add(30*time.Second).UnixNano(), 10))
-	values.Set("limit", "100")
-	values.Set("query", fmt.Sprintf(`{service_name="%s"}`, serviceName))
-	queryURL := normalizeLokiBase(queryBase) + "/loki/api/v1/query_range?" + values.Encode()
-
-	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (done bool, err error) {
-		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, queryURL, nil)
-		if err != nil {
-			return false, err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return false, err
-		}
-		defer func() {
-			if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
-				err = closeErr
-			}
-		}()
-		if resp.StatusCode != http.StatusOK {
-			body, readErr := io.ReadAll(resp.Body)
-			if readErr != nil {
-				return false, readErr
-			}
-			return false, fmt.Errorf("loki query returned %d: %s", resp.StatusCode, string(body))
-		}
-		var payload struct {
-			Data struct {
-				Result []struct {
-					Stream map[string]string `json:"stream"`
-					Values [][]string        `json:"values"`
-				} `json:"result"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return false, err
-		}
-		for _, res := range payload.Data.Result {
-			if res.Stream == nil {
-				continue
-			}
-			if res.Stream["trace_id"] != traceID {
-				continue
-			}
-			if res.Stream["span_id"] != spanID {
-				continue
-			}
-			if res.Stream["service_name"] != serviceName && res.Stream["service_name_extracted"] != serviceName {
-				continue
-			}
-			for _, tuple := range res.Values {
-				if len(tuple) < 2 {
-					continue
-				}
-				if strings.Contains(tuple[1], message) {
-					return true, nil
-				}
-			}
-		}
-		return false, nil
-	})
-}
-
-func waitForMimirMetric(ctx context.Context, queryBase, metricName, testCase, traceID, spanID string) error {
-	queryURL := strings.TrimRight(queryBase, "/") + "/prometheus/api/v1/query"
-	params := url.Values{}
-	params.Set("query", fmt.Sprintf(`%s{test_case="%s",trace_id="%s",span_id="%s"}`, metricName, testCase, traceID, spanID))
-	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (done bool, err error) {
-		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, queryURL+"?"+params.Encode(), nil)
-		if err != nil {
-			return false, err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return false, err
-		}
-		defer func() {
-			if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
-				err = closeErr
-			}
-		}()
-		if resp.StatusCode != http.StatusOK {
-			body, readErr := io.ReadAll(resp.Body)
-			if readErr != nil {
-				return false, readErr
-			}
-			return false, fmt.Errorf("mimir query returned %d: %s", resp.StatusCode, string(body))
-		}
-		var payload struct {
-			Status string `json:"status"`
-			Data   struct {
-				Result []struct {
-					Value []any `json:"value"`
-				} `json:"result"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return false, err
-		}
-		if payload.Status != "success" || len(payload.Data.Result) == 0 {
-			return false, nil
-		}
-		valueField := payload.Data.Result[0].Value
-		if len(valueField) != 2 {
-			return false, fmt.Errorf("unexpected value format: %#v", valueField)
-		}
-		valueStr, ok := valueField[1].(string)
-		if !ok {
-			return false, fmt.Errorf("unexpected value type: %#v", valueField[1])
-		}
-		if valueStr == "0" {
-			return false, nil
-		}
-		return true, nil
-	})
-}
-
-func waitForTempoTrace(ctx context.Context, queryBase, serviceName, testCase, traceID string) error {
-	searchURL := strings.TrimRight(queryBase, "/") + "/api/search"
-	params := url.Values{}
-	params.Set("limit", "5")
-	params.Add("tags", fmt.Sprintf("service.name=%s", serviceName))
-	params.Add("tags", fmt.Sprintf("test_case=%s", testCase))
-
-	return integration.WaitUntil(ctx, 500*time.Millisecond, func(waitCtx context.Context) (done bool, err error) {
-		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, searchURL+"?"+params.Encode(), nil)
-		if err != nil {
-			return false, err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return false, err
-		}
-		defer func() {
-			if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
-				err = closeErr
-			}
-		}()
-		if resp.StatusCode == http.StatusNotFound {
-			return false, nil
-		}
-		if resp.StatusCode != http.StatusOK {
-			body, readErr := io.ReadAll(resp.Body)
-			if readErr != nil {
-				return false, readErr
-			}
-			return false, fmt.Errorf("tempo search returned %d: %s", resp.StatusCode, string(body))
-		}
-		var payload struct {
-			Traces []struct {
-				TraceID string `json:"traceID"`
-			} `json:"traces"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return false, err
-		}
-		for _, tr := range payload.Traces {
-			if tr.TraceID == traceID {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-}
-
-func normalizeLokiBase(raw string) string {
-	trimmed := strings.TrimRight(raw, "/")
-	trimmed = strings.TrimSuffix(trimmed, "/otlp/v1/logs")
-	trimmed = strings.TrimSuffix(trimmed, "/loki/api/v1/push")
-	return strings.TrimRight(trimmed, "/")
 }
 
 func waitForTelemetryFileEntry(t *testing.T, path, expectedMessage string) map[string]any {

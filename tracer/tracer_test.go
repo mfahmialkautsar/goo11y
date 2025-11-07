@@ -49,6 +49,13 @@ func TestSamplerFromRatioDescriptions(t *testing.T) {
 	}
 }
 
+func TestTracerDefaultsDisableSpool(t *testing.T) {
+	defaulted := Config{}.ApplyDefaults()
+	if defaulted.UseSpool {
+		t.Fatal("expected tracer spool to be disabled by default")
+	}
+}
+
 func TestSpanContextExtraction(t *testing.T) {
 	var provider Provider
 
