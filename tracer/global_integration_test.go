@@ -45,6 +45,7 @@ func TestGlobalTempoTracingIntegration(t *testing.T) {
 		Enabled:       true,
 		Endpoint:      otlpEndpoint,
 		Insecure:      true,
+		UseSpool:      false,
 		ServiceName:   serviceName,
 		SampleRatio:   1.0,
 		ExportTimeout: 5 * time.Second,

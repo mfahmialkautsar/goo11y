@@ -96,7 +96,7 @@ func TestClientRetriesUntilSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(queueDir, 50*time.Millisecond)
+	client, err := NewClient(queueDir, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 	recorder := startStderrRecorder(t)
 	defer recorder.Close()
 
-	client, err := NewClient(queueDir, 50*time.Millisecond)
+	client, err := NewClient(queueDir, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -253,13 +253,20 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 		t.Fatalf("resp2.Body.Close: %v", err)
 	}
 
+	secondDelivered := false
 	waitForResult(t, results, func(r captured) bool {
+		if r.body == "second" && r.status == http.StatusOK {
+			secondDelivered = true
+			return false
+		}
 		return r.body == "first" && r.status == http.StatusOK
 	})
 
-	waitForResult(t, results, func(r captured) bool {
-		return r.body == "second" && r.status == http.StatusOK
-	})
+	if !secondDelivered {
+		waitForResult(t, results, func(r captured) bool {
+			return r.body == "second" && r.status == http.StatusOK
+		})
+	}
 
 	waitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
 
@@ -272,7 +279,7 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 
 func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
 	t.Helper()
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -292,7 +299,7 @@ func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
 
 func waitForResult[T any](t *testing.T, ch <-chan T, match func(T) bool) T {
 	t.Helper()
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		select {
 		case item := <-ch:

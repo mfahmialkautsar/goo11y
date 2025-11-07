@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -146,5 +147,215 @@ func TestQueueProcessesPersistedEntries(t *testing.T) {
 	}
 	if len(files) != 0 {
 		t.Fatalf("expected persisted payload to be removed, found %d files", len(files))
+	}
+}
+
+func TestQueueRetryAllowsSubsequentPayloads(t *testing.T) {
+	dir := t.TempDir()
+	queue, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	attempts := make(map[string]int)
+	processed := make(chan string, 8)
+	done := make(chan struct{})
+	origBase := retryBaseDelay
+	origMax := retryMaxDelay
+	retryBaseDelay = 10 * time.Millisecond
+	retryMaxDelay = 20 * time.Millisecond
+	defer func() {
+		retryBaseDelay = origBase
+		retryMaxDelay = origMax
+	}()
+
+	queue.Start(ctx, func(ctx context.Context, payload []byte) error {
+		value := string(payload)
+		mu.Lock()
+		attempts[value]++
+		count := attempts[value]
+		mu.Unlock()
+		processed <- fmt.Sprintf("%s-%d", value, count)
+		if value == "fail" && count < 3 {
+			return fmt.Errorf("fail attempt %d", count)
+		}
+		if value == "ok" {
+			close(done)
+			return nil
+		}
+		return nil
+	})
+
+	if _, err := queue.Enqueue([]byte("fail")); err != nil {
+		t.Fatalf("enqueue fail: %v", err)
+	}
+	if _, err := queue.Enqueue([]byte("ok")); err != nil {
+		t.Fatalf("enqueue ok: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for successful payload")
+	}
+
+	deadline := time.After(time.Second)
+	for {
+		mu.Lock()
+		count := attempts["fail"]
+		mu.Unlock()
+		if count >= 3 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected failing payload to retry, saw %d attempts", count)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	firstTwo := make([]string, 0, 2)
+	for len(firstTwo) < 2 {
+		select {
+		case entry := <-processed:
+			firstTwo = append(firstTwo, entry)
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("timed out collecting processed entries: %v", firstTwo)
+		}
+	}
+
+	if len(firstTwo) != 2 {
+		t.Fatalf("expected two processed entries, got %v", firstTwo)
+	}
+	if firstTwo[0] != "fail-1" || firstTwo[1] != "ok-1" {
+		t.Fatalf("unexpected processing order: %v", firstTwo)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected queue to drain, found %d files", len(files))
+	}
+}
+
+func TestQueueDropsAfterMaxAttemptsAndAge(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Now().Add(-8 * 24 * time.Hour)
+	var clock atomic.Value
+	clock.Store(start)
+	origNow := nowFn
+	nowFn = func() time.Time {
+		return clock.Load().(time.Time)
+	}
+	defer func() { nowFn = origNow }()
+
+	queue, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var attempts int32
+	origBase := retryBaseDelay
+	origMax := retryMaxDelay
+	retryBaseDelay = 5 * time.Millisecond
+	retryMaxDelay = 20 * time.Millisecond
+	defer func() {
+		retryBaseDelay = origBase
+		retryMaxDelay = origMax
+	}()
+	queue.Start(ctx, func(context.Context, []byte) error {
+		if atomic.AddInt32(&attempts, 1) == int32(maxRetryAttempts-1) {
+			clock.Store(start.Add(8 * 24 * time.Hour))
+		}
+		return fmt.Errorf("always fail")
+	})
+
+	if _, err := queue.Enqueue([]byte("stale")); err != nil {
+		t.Fatalf("enqueue stale: %v", err)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("ReadDir: %v", err)
+		}
+		if len(files) == 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("stale payload not dropped; attempts=%d", atomic.LoadInt32(&attempts))
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func TestQueueDropsWhenFull(t *testing.T) {
+	dir := t.TempDir()
+	origLimit := queueMaxFiles
+	queueMaxFiles = 1
+	defer func() { queueMaxFiles = origLimit }()
+
+	queue, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	processed := make(chan struct{}, 1)
+	var failAttempts int32
+
+	queue.Start(ctx, func(_ context.Context, payload []byte) error {
+		switch string(payload) {
+		case "fail":
+			atomic.AddInt32(&failAttempts, 1)
+			return fmt.Errorf("fail")
+		case "ok":
+			processed <- struct{}{}
+			cancel()
+			return nil
+		default:
+			return nil
+		}
+	})
+
+	if _, err := queue.Enqueue([]byte("fail")); err != nil {
+		t.Fatalf("enqueue fail: %v", err)
+	}
+	if _, err := queue.Enqueue([]byte("ok")); err != nil {
+		t.Fatalf("enqueue ok: %v", err)
+	}
+
+	select {
+	case <-processed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for successful payload")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected queue empty, found %d files", len(files))
+	}
+
+	if attempts := atomic.LoadInt32(&failAttempts); attempts != 1 {
+		t.Fatalf("expected failing payload to attempt once, got %d", attempts)
 	}
 }

@@ -44,3 +44,18 @@ func TestOTLPConfigHeaderMapMergesSources(t *testing.T) {
 		t.Fatalf("unexpected merged headers: %#v", headers)
 	}
 }
+
+func TestConfigApplyDefaultsAssignsQueueDir(t *testing.T) {
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "svc",
+		OTLP: OTLPConfig{
+			Enabled: true,
+		},
+	}
+
+	defaulted := cfg.ApplyDefaults()
+	if defaulted.OTLP.QueueDir == "" {
+		t.Fatal("expected OTLP queue dir to be set")
+	}
+}

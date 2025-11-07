@@ -3,10 +3,18 @@ package logger
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/auth"
+	"github.com/mfahmialkautsar/goo11y/constant"
+	"github.com/mfahmialkautsar/goo11y/internal/testutil"
 	"go.opentelemetry.io/otel/attribute"
 	otelLog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/sdk/log"
@@ -48,8 +56,82 @@ func TestOTLPWriterEmitsRecords(t *testing.T) {
 	}
 }
 
+func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
+	queueDir := t.TempDir()
+
+	var fail atomic.Bool
+	fail.Store(true)
+
+	statusCh := make(chan int, 128)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("drain log spool body: %v", err)
+		}
+		if err := r.Body.Close(); err != nil {
+			t.Fatalf("close log spool body: %v", err)
+		}
+		status := http.StatusOK
+		if fail.Load() {
+			status = http.StatusServiceUnavailable
+		}
+		testutil.TrySendStatus(statusCh, status)
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(srv.Close)
+
+	recorder := testutil.StartStderrRecorder(t)
+	t.Cleanup(func() { _ = recorder.Close() })
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
+
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "logger-spool",
+		Console:     false,
+		OTLP: OTLPConfig{
+			Enabled:  true,
+			Endpoint: u.Host,
+			Insecure: true,
+			Exporter: constant.ExporterHTTP,
+			UseSpool: true,
+			QueueDir: queueDir,
+			Timeout:  50 * time.Millisecond,
+		},
+	}
+
+	lg, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if lg == nil {
+		t.Fatal("logger not constructed")
+	}
+
+	lg.Info("spool failure entry")
+
+	testutil.WaitForStatus(t, statusCh, http.StatusServiceUnavailable)
+	testutil.WaitForQueueFiles(t, queueDir, func(n int) bool { return n > 0 })
+
+	fail.Store(false)
+
+	lg.Info("spool recovery entry")
+
+	testutil.WaitForStatus(t, statusCh, http.StatusOK)
+	testutil.WaitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
+
+	time.Sleep(100 * time.Millisecond)
+	output := recorder.Close()
+	if !strings.Contains(output, "remote status 503") {
+		t.Fatalf("expected spool error log, got %q", output)
+	}
+}
+
 func TestConfigureExporterRejectsUnknown(t *testing.T) {
-	_, err := configureExporter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Exporter: "udp"})
+	_, _, err := configureExporter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Exporter: "udp"})
 	if err == nil {
 		t.Fatal("expected error for unsupported exporter")
 	}

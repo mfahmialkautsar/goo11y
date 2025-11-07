@@ -6,59 +6,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
+	"github.com/mfahmialkautsar/goo11y/internal/testutil"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 )
-
-type stderrRecorder struct {
-	orig     *os.File
-	r        *os.File
-	w        *os.File
-	buf      strings.Builder
-	done     chan struct{}
-	captured string
-	once     sync.Once
-}
-
-func startStderrRecorder(t *testing.T) *stderrRecorder {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	recorder := &stderrRecorder{
-		orig: os.Stderr,
-		r:    r,
-		w:    w,
-		done: make(chan struct{}),
-	}
-	os.Stderr = w
-	go func() {
-		_, _ = io.Copy(&recorder.buf, r)
-		close(recorder.done)
-	}()
-	return recorder
-}
-
-func (r *stderrRecorder) Close() string {
-	r.once.Do(func() {
-		_ = r.w.Close()
-		<-r.done
-		os.Stderr = r.orig
-		r.captured = r.buf.String()
-	})
-	return r.captured
-}
 
 func TestMeterExporterReturnsErrorOnFailure(t *testing.T) {
 	statusCh := make(chan int, 64)
@@ -70,7 +29,7 @@ func TestMeterExporterReturnsErrorOnFailure(t *testing.T) {
 		if err := r.Body.Close(); err != nil {
 			t.Fatalf("r.Body.Close: %v", err)
 		}
-		trySendStatus(statusCh, http.StatusServiceUnavailable)
+		testutil.TrySendStatus(statusCh, http.StatusServiceUnavailable)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(srv.Close)
@@ -159,12 +118,12 @@ func TestMeterSpoolRecoversAfterFailure(t *testing.T) {
 		if fail.Load() {
 			status = http.StatusServiceUnavailable
 		}
-		trySendStatus(statusCh, status)
+		testutil.TrySendStatus(statusCh, status)
 		w.WriteHeader(status)
 	}))
 	t.Cleanup(srv.Close)
 
-	recorder := startStderrRecorder(t)
+	recorder := testutil.StartStderrRecorder(t)
 	t.Cleanup(func() { _ = recorder.Close() })
 
 	u, err := url.Parse(srv.URL)
@@ -197,75 +156,41 @@ func TestMeterSpoolRecoversAfterFailure(t *testing.T) {
 		t.Fatalf("Int64Counter: %v", err)
 	}
 
+	ctx := context.Background()
+
 	for range 3 {
-		counter.Add(context.Background(), 1)
+		counter.Add(ctx, 1)
 	}
 
-	if err := provider.provider.ForceFlush(context.Background()); err != nil {
+	firstFlushCtx, firstCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer firstCancel()
+
+	if err := provider.ForceFlush(firstFlushCtx); err != nil {
 		t.Fatalf("ForceFlush: %v", err)
 	}
 
-	waitForStatus(t, statusCh, http.StatusServiceUnavailable)
-	waitForQueueFiles(t, queueDir, func(n int) bool { return n > 0 })
+	testutil.WaitForStatus(t, statusCh, http.StatusServiceUnavailable)
+	testutil.WaitForQueueFiles(t, queueDir, func(n int) bool { return n > 0 })
 
 	fail.Store(false)
 
 	for range 3 {
-		counter.Add(context.Background(), 1)
+		counter.Add(ctx, 1)
 	}
 
-	if err := provider.provider.ForceFlush(context.Background()); err != nil {
+	secondFlushCtx, secondCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer secondCancel()
+
+	if err := provider.ForceFlush(secondFlushCtx); err != nil {
 		t.Fatalf("ForceFlush after recovery: %v", err)
 	}
 
-	waitForStatus(t, statusCh, http.StatusOK)
-	waitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
+	testutil.WaitForStatus(t, statusCh, http.StatusOK)
+	testutil.WaitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })
 
 	time.Sleep(100 * time.Millisecond)
 	output := recorder.Close()
 	if !strings.Contains(output, "remote status 503") {
 		t.Fatalf("expected spool error log, got %q", output)
-	}
-}
-
-func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
-	t.Helper()
-	deadline := time.After(2 * time.Second)
-	for {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("ReadDir: %v", err)
-		}
-		if done(len(entries)) {
-			return
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("timeout waiting for queue files, entries=%d", len(entries))
-		default:
-			time.Sleep(20 * time.Millisecond)
-		}
-	}
-}
-
-func waitForStatus(t *testing.T, ch <-chan int, want int) {
-	t.Helper()
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case status := <-ch:
-			if status == want {
-				return
-			}
-		case <-deadline:
-			t.Fatalf("timeout waiting for status %d", want)
-		}
-	}
-}
-
-func trySendStatus(ch chan<- int, status int) {
-	select {
-	case ch <- status:
-	default:
 	}
 }

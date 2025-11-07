@@ -39,6 +39,8 @@ type OTLPConfig struct {
 	Exporter    string        `default:"http" validate:"oneof=http grpc"`
 	Credentials auth.Credentials
 	Async       bool
+	UseSpool    bool
+	QueueDir    string
 }
 
 // FileConfig controls optional file-based logging.
@@ -55,6 +57,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.File.Enabled && c.File.Buffer == 0 {
 		c.File.Buffer = 1024
+	}
+	if c.OTLP.QueueDir == "" {
+		c.OTLP.QueueDir = fileutil.DefaultQueueDir("logs")
 	}
 	return c
 }
@@ -88,9 +93,7 @@ func (c OTLPConfig) headerMap() map[string]string {
 	var headers map[string]string
 
 	if credHeaders := c.Credentials.HeaderMap(); len(credHeaders) > 0 {
-		if headers == nil {
-			headers = make(map[string]string, len(credHeaders))
-		}
+		headers = make(map[string]string, len(credHeaders))
 		merge(headers, credHeaders)
 	}
 	if len(c.Headers) > 0 {

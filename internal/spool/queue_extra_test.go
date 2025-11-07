@@ -1,7 +1,6 @@
 package spool
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,37 +49,77 @@ func TestCompleteProtectsPaths(t *testing.T) {
 	}
 }
 
-func TestCleanOldFilesRemovesExpiredEntries(t *testing.T) {
+func TestCleanOldFilesRemovesStaleRetries(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	cutoffName := func(idx int) string {
-		return fmt.Sprintf(queueFilePattern, int64(idx), idx%1_000_000)
-	}
-
 	var logged []error
 	queue, err := NewWithErrorLogger(dir, ErrorLoggerFunc(func(err error) { logged = append(logged, err) }))
 	if err != nil {
 		t.Fatalf("NewWithErrorLogger: %v", err)
 	}
 
-	staleTime := time.Now().Add(-2 * time.Minute)
-	freshTime := time.Now()
-	const freshIndex = maxBufferFiles
+	now := time.Now()
+	stale := fileToken{
+		retryAt:   now,
+		createdAt: now.Add(-8 * 24 * time.Hour),
+		seq:       1,
+		attempts:  maxRetryAttempts,
+	}
+	fresh := fileToken{
+		retryAt:   now,
+		createdAt: now,
+		seq:       2,
+		attempts:  0,
+	}
 
-	for i := range maxBufferFiles + 1 {
-		name := cutoffName(i)
-		path := filepath.Join(dir, name)
-		payload := fmt.Appendf(nil, "payload-%d", i)
-		if err := os.WriteFile(path, payload, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, formatToken(stale)), []byte("stale"), 0o600); err != nil {
+		t.Fatalf("WriteFile stale: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, formatToken(fresh)), []byte("fresh"), 0o600); err != nil {
+		t.Fatalf("WriteFile fresh: %v", err)
+	}
+
+	if err := queue.cleanOldFiles(); err != nil {
+		t.Fatalf("cleanOldFiles: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != formatToken(fresh) {
+		t.Fatalf("expected only fresh payload to remain, got %v", entries)
+	}
+	if len(logged) == 0 {
+		t.Fatal("expected cleanup to log stale removal")
+	}
+}
+
+func TestCleanOldFilesTrimsOverflow(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	origLimit := queueMaxFiles
+	queueMaxFiles = 2
+	defer func() { queueMaxFiles = origLimit }()
+
+	queue, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	base := time.Now()
+	tokens := []fileToken{
+		{retryAt: base.Add(-time.Second), createdAt: base.Add(-time.Second), seq: 1},
+		{retryAt: base, createdAt: base, seq: 2},
+		{retryAt: base.Add(time.Second), createdAt: base.Add(time.Second), seq: 3},
+	}
+
+	for _, tok := range tokens {
+		path := filepath.Join(dir, formatToken(tok))
+		if err := os.WriteFile(path, []byte("payload"), 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
-		}
-		modTime := staleTime
-		if i == freshIndex {
-			modTime = freshTime
-		}
-		if err := os.Chtimes(path, modTime, modTime); err != nil {
-			t.Fatalf("Chtimes: %v", err)
 		}
 	}
 
@@ -92,13 +131,13 @@ func TestCleanOldFilesRemovesExpiredEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-
-	if len(entries) != 1 {
-		t.Fatalf("expected one file to remain, got %d", len(entries))
+	if len(entries) != queueMaxFiles {
+		t.Fatalf("expected queue trimmed to %d entries, got %d", queueMaxFiles, len(entries))
 	}
-
-	if len(logged) == 0 {
-		t.Fatal("expected cleanup to log removal")
+	for _, entry := range entries {
+		if entry.Name() == formatToken(tokens[0]) {
+			t.Fatalf("expected oldest entry to be removed, still found %s", entry.Name())
+		}
 	}
 }
 

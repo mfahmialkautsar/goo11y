@@ -10,6 +10,8 @@ import (
 	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/internal/attrutil"
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
+	"github.com/mfahmialkautsar/goo11y/internal/persistentgrpc"
+	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -18,7 +20,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 	"go.opentelemetry.io/otel/trace"
+	collog "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/proto"
 )
 
 const loggerInstrumentation = "github.com/mfahmialkautsar/goo11y/logger"
@@ -32,11 +37,11 @@ func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment
 		ctx = context.Background()
 	}
 
-	exporter, err := configureExporter(ctx, cfg)
+	exporter, spool, err := configureExporter(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	exporter = wrapLogExporter(exporter, "logger", cfg.Exporter)
+	exporter = wrapLogExporter(exporter, "logger", cfg.Exporter, spool)
 
 	res, err := buildResource(ctx, serviceName, environment)
 	if err != nil {
@@ -76,15 +81,15 @@ func (w *otlpWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, error) {
+func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, *persistentgrpc.Manager, error) {
 	endpoint := strings.TrimSpace(cfg.Endpoint)
 	if endpoint == "" {
-		return nil, fmt.Errorf("otlp: endpoint is required")
+		return nil, nil, fmt.Errorf("otlp: endpoint is required")
 	}
 
 	parsed, err := otlputil.ParseEndpoint(endpoint, cfg.Insecure)
 	if err != nil {
-		return nil, fmt.Errorf("otlp: %w", err)
+		return nil, nil, fmt.Errorf("otlp: %w", err)
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.Exporter))
@@ -94,11 +99,19 @@ func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, error
 
 	switch mode {
 	case constant.ExporterHTTP:
-		return setupHTTPExporter(ctx, cfg, parsed)
+		exporter, err := setupHTTPExporter(ctx, cfg, parsed)
+		if err != nil {
+			return nil, nil, err
+		}
+		return exporter, nil, nil
 	case constant.ExporterGRPC:
-		return setupGRPCExporter(ctx, cfg, parsed)
+		exporter, spool, err := setupGRPCExporter(ctx, cfg, parsed)
+		if err != nil {
+			return nil, nil, err
+		}
+		return exporter, spool, nil
 	default:
-		return nil, fmt.Errorf("otlp: unsupported exporter %q", cfg.Exporter)
+		return nil, nil, fmt.Errorf("otlp: unsupported exporter %q", cfg.Exporter)
 	}
 }
 
@@ -106,16 +119,21 @@ type logExporterWithLogging struct {
 	log.Exporter
 	component string
 	transport string
+	spool     *persistentgrpc.Manager
 }
 
-func wrapLogExporter(exp log.Exporter, component, transport string) log.Exporter {
+func wrapLogExporter(exp log.Exporter, component, transport string, spool *persistentgrpc.Manager) log.Exporter {
 	if exp == nil {
+		if spool != nil {
+			_ = spool.Stop(context.Background())
+		}
 		return exp
 	}
 	return &logExporterWithLogging{
 		Exporter:  exp,
 		component: component,
 		transport: transport,
+		spool:     spool,
 	}
 }
 
@@ -131,6 +149,11 @@ func (l logExporterWithLogging) Shutdown(ctx context.Context) error {
 	err := l.Exporter.Shutdown(ctx)
 	if err != nil {
 		otlputil.LogExportFailure(l.component, l.transport, err)
+	}
+	if l.spool != nil {
+		if stopErr := l.spool.Stop(ctx); stopErr != nil && err == nil {
+			err = stopErr
+		}
 	}
 	return err
 }
@@ -158,6 +181,13 @@ func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.En
 	if headers := cfg.headerMap(); len(headers) > 0 {
 		options = append(options, otlploghttp.WithHeaders(headers))
 	}
+	if cfg.UseSpool {
+		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("otlp http exporter: %w", err)
+		}
+		options = append(options, otlploghttp.WithHTTPClient(client))
+	}
 
 	options = append(options, otlploghttp.WithRetry(otlploghttp.RetryConfig{Enabled: true}))
 
@@ -168,9 +198,9 @@ func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.En
 	return exporter, nil
 }
 
-func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, error) {
+func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, *persistentgrpc.Manager, error) {
 	if endpoint.HasPath() {
-		return nil, fmt.Errorf("otlp: grpc endpoint %q must not include a path", cfg.Endpoint)
+		return nil, nil, fmt.Errorf("otlp: grpc endpoint %q must not include a path", cfg.Endpoint)
 	}
 
 	options := []otlploggrpc.Option{
@@ -189,13 +219,33 @@ func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.En
 		options = append(options, otlploggrpc.WithHeaders(headers))
 	}
 
+	var spoolManager *persistentgrpc.Manager
+	if cfg.UseSpool {
+		manager, err := persistentgrpc.NewManager(
+			cfg.QueueDir,
+			"logger",
+			cfg.Exporter,
+			"/opentelemetry.proto.collector.logs.v1.LogsService/Export",
+			func() proto.Message { return new(collog.ExportLogsServiceRequest) },
+			func() proto.Message { return new(collog.ExportLogsServiceResponse) },
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		spoolManager = manager
+		options = append(options, otlploggrpc.WithDialOption(grpc.WithUnaryInterceptor(manager.Interceptor())))
+	}
+
 	options = append(options, otlploggrpc.WithRetry(otlploggrpc.RetryConfig{Enabled: true}))
 
 	exporter, err := otlploggrpc.New(ctx, options...)
 	if err != nil {
-		return nil, fmt.Errorf("otlp grpc exporter: %w", err)
+		if spoolManager != nil {
+			_ = spoolManager.Stop(context.Background())
+		}
+		return nil, nil, fmt.Errorf("otlp grpc exporter: %w", err)
 	}
-	return exporter, nil
+	return exporter, spoolManager, nil
 }
 
 func buildResource(ctx context.Context, serviceName, environment string) (*resource.Resource, error) {
