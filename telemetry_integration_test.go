@@ -133,7 +133,7 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		if tele.Logger == nil {
 			t.Fatal("expected logger to be initialized")
 		}
-		tele.Logger.WithContext(ctx).Info(logMessage, "test_case", testCase)
+		tele.Logger.WithContext(ctx).Info().Str("test_case", testCase).Msg(logMessage)
 
 		m := otel.Meter("goo11y/integration")
 		counter, err := m.Int64Counter(metricName)

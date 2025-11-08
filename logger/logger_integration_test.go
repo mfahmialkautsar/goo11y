@@ -42,7 +42,7 @@ func TestFileLoggingIntegration(t *testing.T) {
 	}
 
 	message := fmt.Sprintf("file-integration-log-%d", time.Now().UnixNano())
-	log.Info(message, "test_case", "file_integration")
+	log.Info().Str("test_case", "file_integration").Msg(message)
 
 	path := filepath.Join(dir, time.Now().Format("2006-01-02")+".log")
 	entry := waitForFileEntry(t, path, message)
@@ -92,7 +92,7 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 		t.Fatal("expected logger instance")
 	}
 
-	log.WithContext(context.Background()).With("test_case", "logger").Info(message)
+	log.WithContext(context.Background()).Info().Str("test_case", "logger").Msg(message)
 
 	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
 		t.Fatalf("find log entry: %v", err)
@@ -139,8 +139,8 @@ func TestLoggerSpanEventsIntegration(t *testing.T) {
 	}))
 
 	contextual := log.WithContext(ctx)
-	contextual.Debug("debug-event")
-	contextual.Warn("warn-event", "test_case", "logger_span_events")
+	contextual.Debug().Msg("debug-event")
+	contextual.Warn().Str("test_case", "logger_span_events").Msg("warn-event")
 
 	span.End()
 

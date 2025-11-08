@@ -37,7 +37,7 @@ func (c *capturingHandler) snapshot() []string {
 }
 
 func TestExportFailureLoggerSkipsFailingTransport(t *testing.T) {
-	fanout := newWriterFanout()
+	fanout := newWriterRegistry()
 	otlpBuf := &bytes.Buffer{}
 	stdoutBuf := &bytes.Buffer{}
 	fanout.add("http", otlpBuf)
@@ -60,8 +60,8 @@ func TestExportFailureLoggerSkipsFailingTransport(t *testing.T) {
 	}
 }
 
-func TestWriterFanoutReportsFailures(t *testing.T) {
-	fanout := newWriterFanout()
+func TestWriterRegistryReportsFailures(t *testing.T) {
+	fanout := newWriterRegistry()
 	payload := []byte(`{"msg":"hi"}`)
 
 	okBuf := &bytes.Buffer{}
@@ -73,7 +73,6 @@ func TestWriterFanoutReportsFailures(t *testing.T) {
 		collector.append(component, transport)
 	})
 	defer otlputil.SetExportFailureHandler(nil)
-
 	writer := fanout.writer()
 	if _, err := writer.Write(payload); err == nil {
 		t.Fatalf("expected write error when one writer fails")
@@ -112,8 +111,8 @@ func TestFailureExclusionsEmptyTransport(t *testing.T) {
 	}
 }
 
-func TestWriterFanoutWriterExceptFallback(t *testing.T) {
-	fanout := newWriterFanout()
+func TestWriterRegistryWriterExceptFallback(t *testing.T) {
+	fanout := newWriterRegistry()
 	fanout.add("stdout", &bytes.Buffer{})
 	writer := fanout.writerExcept("stdout")
 	file, ok := writer.(*os.File)

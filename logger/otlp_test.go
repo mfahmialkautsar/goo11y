@@ -111,14 +111,14 @@ func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
 		t.Fatal("logger not constructed")
 	}
 
-	lg.Info("spool failure entry")
+	lg.Info().Msg("spool failure entry")
 
 	testutil.WaitForStatus(t, statusCh, http.StatusServiceUnavailable)
 	testutil.WaitForQueueFiles(t, queueDir, func(n int) bool { return n > 0 })
 
 	fail.Store(false)
 
-	lg.Info("spool recovery entry")
+	lg.Info().Msg("spool recovery entry")
 
 	testutil.WaitForStatus(t, statusCh, http.StatusOK)
 	testutil.WaitForQueueFiles(t, queueDir, func(n int) bool { return n == 0 })

@@ -87,7 +87,7 @@ func main() {
 	defer tele.Shutdown(ctx)
 
 	if tele.Logger != nil {
-		tele.Logger.WithContext(ctx).Info("service online")
+		tele.Logger.WithContext(ctx).Info().Msg("service online")
 	}
 
 	tracer := otel.Tracer("checkout.api")

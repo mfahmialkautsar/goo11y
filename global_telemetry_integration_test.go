@@ -131,7 +131,7 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	pyroscope.TagWrapper(spanCtx, pyroscope.Labels(profiler.TraceProfileAttributeKey, profileID), func(ctx context.Context) {
 		burnCPU(500 * time.Millisecond)
 
-		logger.WithContext(ctx).Info(logMessage, "test_case", testCase)
+		logger.WithContext(ctx).Info().Str("test_case", testCase).Msg(logMessage)
 
 		m := meter.Meter("goo11y/global-telemetry")
 		counter, err := m.Int64Counter(metricName)

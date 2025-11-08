@@ -19,7 +19,7 @@ const shutdownGracePeriod = 5 * time.Second
 
 // Telemetry owns the lifecycle of the configured observability components.
 type Telemetry struct {
-	Logger   logger.Logger
+	Logger   *logger.Logger
 	Tracer   *tracer.Provider
 	Meter    *meter.Provider
 	Profiler *profiler.Controller
@@ -47,7 +47,7 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 
 	if cfg.Logger.Enabled {
 		var (
-			log logger.Logger
+			log *logger.Logger
 			err error
 		)
 		if cfg.Logger.UseGlobal {
@@ -221,7 +221,7 @@ func (t *Telemetry) emitWarn(ctx context.Context, msg string, err error) {
 	if err == nil {
 		return
 	}
-	t.Logger.WithContext(ctx).Warn(msg, "error", err)
+	t.Logger.WithContext(ctx).Warn().Err(err).Msg(msg)
 }
 
 func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) {

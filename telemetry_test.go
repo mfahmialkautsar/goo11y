@@ -83,11 +83,26 @@ func TestTelemetryEmitWarnSkipsNilLogger(t *testing.T) {
 }
 
 func TestTelemetryEmitWarnSkipsNilError(t *testing.T) {
-	stub := &stubWarnLogger{}
-	tele := &Telemetry{Logger: stub}
+	var buf bytes.Buffer
+	logCfg := logger.Config{
+		Enabled:     true,
+		Level:       "info",
+		Environment: "test",
+		ServiceName: "warn-skip",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+	}
+	log, err := logger.New(context.Background(), logCfg)
+	if err != nil {
+		t.Fatalf("logger.New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+	tele := &Telemetry{Logger: log}
 	tele.emitWarn(context.Background(), "msg", nil)
-	if stub.called {
-		t.Fatal("expected warn not invoked when error is nil")
+	if buf.Len() != 0 {
+		t.Fatalf("expected no log output for nil error, got %s", buf.String())
 	}
 }
 
@@ -98,19 +113,6 @@ type stubDetector struct {
 func (d stubDetector) Detect(context.Context) (*sdkresource.Resource, error) {
 	return sdkresource.NewSchemaless(d.attr), nil
 }
-
-type stubWarnLogger struct {
-	called bool
-}
-
-func (s *stubWarnLogger) WithContext(context.Context) logger.Logger { return s }
-func (s *stubWarnLogger) With(...any) logger.Logger                 { return s }
-func (s *stubWarnLogger) Debug(string, ...any)                      {}
-func (s *stubWarnLogger) Info(string, ...any)                       {}
-func (s *stubWarnLogger) Warn(string, ...any)                       { s.called = true }
-func (s *stubWarnLogger) Error(error, string, ...any)               {}
-func (s *stubWarnLogger) Fatal(error, string, ...any)               {}
-func (s *stubWarnLogger) SetTraceProvider(logger.TraceProvider)     {}
 
 func TestBuildResourceComposes(t *testing.T) {
 	cfg := Config{

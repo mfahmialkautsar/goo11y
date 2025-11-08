@@ -18,16 +18,17 @@ const (
 	spanIDField  = "span_id"
 )
 
-// Logger exposes context-aware logging without requiring context propagation on every call.
-type Logger interface {
-	WithContext(ctx context.Context) Logger
-	With(fields ...any) Logger
-	Debug(msg string, fields ...any)
-	Info(msg string, fields ...any)
-	Warn(msg string, fields ...any)
-	Error(err error, msg string, fields ...any)
-	Fatal(err error, msg string, fields ...any)
-	SetTraceProvider(provider TraceProvider)
+// Logger wraps zerolog.Logger while enriching events with trace metadata when context is provided.
+type Logger struct {
+	core *loggerCore
+	zl   zerolog.Logger
+	ctx  context.Context
+}
+
+type loggerCore struct {
+	base          zerolog.Logger
+	outputs       *writerRegistry
+	traceProvider atomic.Value // TraceProvider
 }
 
 // TraceContext represents trace metadata injected into structured logs.
@@ -49,24 +50,12 @@ func (f TraceProviderFunc) Current(ctx context.Context) (TraceContext, bool) {
 	return f(ctx)
 }
 
-type loggerCore struct {
-	base          zerolog.Logger
-	outputs       *writerFanout
-	traceProvider atomic.Value // TraceProvider
-}
-
-type zerologLogger struct {
-	core   *loggerCore
-	ctx    context.Context
-	static []any
-}
-
 var noopTraceProvider = TraceProviderFunc(func(context.Context) (TraceContext, bool) {
 	return TraceContext{}, false
 })
 
 // New constructs a Zerolog-backed logger based on the provided configuration.
-func New(ctx context.Context, cfg Config) (Logger, error) {
+func New(ctx context.Context, cfg Config) (*Logger, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -84,7 +73,7 @@ func New(ctx context.Context, cfg Config) (Logger, error) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 
-	fanout := newWriterFanout()
+	fanout := newWriterRegistry()
 	for idx, w := range cfg.Writers {
 		fanout.add(fmt.Sprintf("custom_%d", idx), w)
 	}
@@ -135,100 +124,100 @@ func New(ctx context.Context, cfg Config) (Logger, error) {
 
 	otlputil.SetExportFailureHandler(exportFailureLogger(core))
 
-	return &zerologLogger{core: core}, nil
+	return &Logger{core: core, zl: base}, nil
 }
 
 // WithContext binds a context to the logger for subsequent trace extraction.
-func (l *zerologLogger) WithContext(ctx context.Context) Logger {
+func (l *Logger) WithContext(ctx context.Context) *Logger {
+	if l == nil {
+		return nil
+	}
 	clone := l.clone()
 	clone.ctx = ctx
 	return clone
 }
 
-// With attaches static fields to every log emission from the returned logger.
-func (l *zerologLogger) With(fields ...any) Logger {
-	if len(fields) == 0 {
+// Update returns a logger with additional contextual fields provided by builder.
+func (l *Logger) Update(builder func(zerolog.Context) zerolog.Context) *Logger {
+	if l == nil || builder == nil {
 		return l
 	}
 	clone := l.clone()
-	clone.static = append(clone.static, fields...)
+	ctx := builder(clone.zl.With())
+	clone.zl = ctx.Logger()
 	return clone
 }
 
-// Debug emits a debug-level message.
-func (l *zerologLogger) Debug(msg string, fields ...any) {
-	l.emit("debug", nil, l.core.base.Debug().Caller(1), msg, fields)
-}
-
-// Info emits an info-level message.
-func (l *zerologLogger) Info(msg string, fields ...any) {
-	l.emit("info", nil, l.core.base.Info().Caller(1), msg, fields)
-}
-
-// Warn emits a warning-level message.
-func (l *zerologLogger) Warn(msg string, fields ...any) {
-	l.emit("warn", nil, l.core.base.Warn().Caller(1), msg, fields)
-}
-
-// Error emits an error-level message capturing the supplied error stack if present.
-func (l *zerologLogger) Error(err error, msg string, fields ...any) {
-	event := l.core.base.Error().Caller(1)
-	if err != nil {
-		event = event.Stack().Err(err)
+// Debug opens a debug level event.
+func (l *Logger) Debug() *zerolog.Event {
+	if l == nil {
+		return nil
 	}
-	l.emit("error", err, event, msg, fields)
+	return l.decorate(l.zl.Debug().Caller(1))
 }
 
-// Fatal logs the error and terminates execution via zerolog's fatal semantics.
-func (l *zerologLogger) Fatal(err error, msg string, fields ...any) {
-	event := l.core.base.Fatal().Caller(1)
-	if err != nil {
-		event = event.Stack().Err(err)
+// Info opens an info level event.
+func (l *Logger) Info() *zerolog.Event {
+	if l == nil {
+		return nil
 	}
-	l.emit("fatal", err, event, msg, fields)
+	return l.decorate(l.zl.Info().Caller(1))
+}
+
+// Warn opens a warn level event.
+func (l *Logger) Warn() *zerolog.Event {
+	if l == nil {
+		return nil
+	}
+	return l.decorate(l.zl.Warn().Caller(1))
+}
+
+// Error opens an error level event.
+func (l *Logger) Error() *zerolog.Event {
+	if l == nil {
+		return nil
+	}
+	return l.decorate(l.zl.Error().Caller(1))
+}
+
+// Fatal opens a fatal level event.
+func (l *Logger) Fatal() *zerolog.Event {
+	if l == nil {
+		return nil
+	}
+	return l.decorate(l.zl.Fatal().Caller(1))
+}
+
+// WithLevel opens an event at the specified level.
+func (l *Logger) WithLevel(level zerolog.Level) *zerolog.Event {
+	if l == nil {
+		return nil
+	}
+	return l.decorate(l.zl.WithLevel(level).Caller(1))
 }
 
 // SetTraceProvider configures trace metadata injection for subsequent log events.
-func (l *zerologLogger) SetTraceProvider(provider TraceProvider) {
+func (l *Logger) SetTraceProvider(provider TraceProvider) {
+	if l == nil {
+		return
+	}
 	if provider == nil {
 		provider = noopTraceProvider
 	}
 	l.core.traceProvider.Store(provider)
 }
 
-func (l *zerologLogger) emit(level string, err error, event *zerolog.Event, msg string, fields []any) {
-	if event == nil {
-		return
+func (l *Logger) decorate(event *zerolog.Event) *zerolog.Event {
+	if event == nil || l == nil || l.ctx == nil {
+		return event
 	}
-	l.applyTrace(event)
-	combined := make([]any, 0, len(l.static)+len(fields))
-	if len(l.static) > 0 {
-		combined = append(combined, l.static...)
-	}
-	combined = append(combined, fields...)
-	applyFields(event, combined)
-	event.Msg(msg)
-}
-
-func (l *zerologLogger) applyTrace(event *zerolog.Event) {
-	if l.core == nil || event == nil {
-		return
-	}
-	ctx := l.ctx
-	if ctx == nil {
-		return
-	}
-	value := l.core.traceProvider.Load()
-	if value == nil {
-		return
-	}
-	provider, _ := value.(TraceProvider)
+	provider, _ := l.core.traceProvider.Load().(TraceProvider)
 	if provider == nil {
-		return
+		return event
 	}
-	traceCtx, ok := provider.Current(ctx)
+	traceCtx, ok := provider.Current(l.ctx)
 	if !ok {
-		return
+		return event
 	}
 	if traceCtx.TraceID != "" {
 		event.Str(traceIDField, traceCtx.TraceID)
@@ -236,17 +225,15 @@ func (l *zerologLogger) applyTrace(event *zerolog.Event) {
 	if traceCtx.SpanID != "" {
 		event.Str(spanIDField, traceCtx.SpanID)
 	}
+	return event
 }
 
-func (l *zerologLogger) clone() *zerologLogger {
-	clone := &zerologLogger{
-		core: l.core,
-		ctx:  l.ctx,
+func (l *Logger) clone() *Logger {
+	if l == nil {
+		return nil
 	}
-	if len(l.static) > 0 {
-		clone.static = append([]any(nil), l.static...)
-	}
-	return clone
+	clone := *l
+	return &clone
 }
 
 func exportFailureLogger(core *loggerCore) func(component, transport string, err error) {
@@ -288,15 +275,15 @@ type namedWriter struct {
 	writer io.Writer
 }
 
-type writerFanout struct {
+type writerRegistry struct {
 	writers []namedWriter
 }
 
-func newWriterFanout() *writerFanout {
-	return &writerFanout{writers: make([]namedWriter, 0)}
+func newWriterRegistry() *writerRegistry {
+	return &writerRegistry{writers: make([]namedWriter, 0)}
 }
 
-func (f *writerFanout) add(name string, writer io.Writer) {
+func (f *writerRegistry) add(name string, writer io.Writer) {
 	if writer == nil {
 		return
 	}
@@ -307,18 +294,18 @@ func (f *writerFanout) add(name string, writer io.Writer) {
 	f.writers = append(f.writers, namedWriter{name: name, writer: writer})
 }
 
-func (f *writerFanout) len() int {
+func (f *writerRegistry) len() int {
 	return len(f.writers)
 }
 
-func (f *writerFanout) writer() io.Writer {
+func (f *writerRegistry) writer() io.Writer {
 	if len(f.writers) == 0 {
 		return nilWriter{}
 	}
 	return fanoutWriter{writers: append([]namedWriter(nil), f.writers...)}
 }
 
-func (f *writerFanout) writerExcept(excluded ...string) io.Writer {
+func (f *writerRegistry) writerExcept(excluded ...string) io.Writer {
 	if len(f.writers) == 0 {
 		return os.Stderr
 	}
@@ -372,4 +359,11 @@ type nilWriter struct{}
 
 func (nilWriter) Write(p []byte) (int, error) {
 	return len(p), nil
+}
+
+func newNoopLogger() *Logger {
+	base := zerolog.New(nilWriter{})
+	core := &loggerCore{base: base, outputs: newWriterRegistry()}
+	core.traceProvider.Store(noopTraceProvider)
+	return &Logger{core: core, zl: base}
 }

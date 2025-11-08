@@ -7,87 +7,11 @@ import (
 	"io"
 	"testing"
 
+	"github.com/rs/zerolog"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
-
-type stubLogger struct {
-	context   context.Context
-	fields    []any
-	debugCall struct {
-		msg    string
-		fields []any
-	}
-	infoCall struct {
-		msg    string
-		fields []any
-	}
-	warnCall struct {
-		msg    string
-		fields []any
-	}
-	errorCall struct {
-		err    error
-		msg    string
-		fields []any
-	}
-	fatalCall struct {
-		err    error
-		msg    string
-		fields []any
-	}
-	provider TraceProvider
-}
-
-func (s *stubLogger) WithContext(ctx context.Context) Logger {
-	s.context = ctx
-	return s
-}
-
-func (s *stubLogger) With(fields ...any) Logger {
-	s.fields = append([]any(nil), fields...)
-	return s
-}
-
-func (s *stubLogger) Debug(msg string, fields ...any) {
-	s.debugCall = struct {
-		msg    string
-		fields []any
-	}{msg, append([]any(nil), fields...)}
-}
-
-func (s *stubLogger) Info(msg string, fields ...any) {
-	s.infoCall = struct {
-		msg    string
-		fields []any
-	}{msg, append([]any(nil), fields...)}
-}
-
-func (s *stubLogger) Warn(msg string, fields ...any) {
-	s.warnCall = struct {
-		msg    string
-		fields []any
-	}{msg, append([]any(nil), fields...)}
-}
-
-func (s *stubLogger) Error(err error, msg string, fields ...any) {
-	s.errorCall = struct {
-		err    error
-		msg    string
-		fields []any
-	}{err: err, msg: msg, fields: append([]any(nil), fields...)}
-}
-
-func (s *stubLogger) Fatal(err error, msg string, fields ...any) {
-	s.fatalCall = struct {
-		err    error
-		msg    string
-		fields []any
-	}{err: err, msg: msg, fields: append([]any(nil), fields...)}
-}
-
-func (s *stubLogger) SetTraceProvider(provider TraceProvider) { s.provider = provider }
 
 func TestInitSetsGlobalLogger(t *testing.T) {
 	t.Cleanup(func() { Use(nil) })
@@ -109,7 +33,7 @@ func TestInitSetsGlobalLogger(t *testing.T) {
 		t.Fatal("expected init logger")
 	}
 
-	Info("global-message", "foo", "bar")
+	Info().Str("foo", "bar").Msg("global-message")
 
 	entry := decodeLogLine(t, buf.Bytes())
 	if got := entry["message"]; got != "global-message" {
@@ -120,50 +44,42 @@ func TestInitSetsGlobalLogger(t *testing.T) {
 	}
 }
 
-func TestGlobalHelpersDelegate(t *testing.T) {
-	stub := &stubLogger{}
-	Use(stub)
+func TestGlobalUpdateAndContext(t *testing.T) {
+	Use(nil)
 	t.Cleanup(func() { Use(nil) })
 
-	type contextKey string
-	tCtx := context.WithValue(context.Background(), contextKey("key"), "value")
-	WithContext(tCtx).Info("context-msg")
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "global-update",
+		Environment: "test",
+		Console:     false,
+		Level:       "debug",
+		Writers:     []io.Writer{&buf},
+	}
 
-	With("foo", "bar").Warn("with-msg", "answer", 42)
+	log, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	Use(log)
 
-	err := errors.New("boom")
-	Debug("debug-msg", "count", 1)
-	Info("info-msg", "count", 2)
-	Warn("warn-msg", "count", 3)
-	Error(err, "error-msg", "count", 4)
-	Fatal(err, "fatal-msg", "count", 5)
+	type ctxKey string
+	ctx := context.WithValue(context.Background(), ctxKey("key"), "value")
 
-	provider := TraceProviderFunc(func(context.Context) (TraceContext, bool) { return TraceContext{}, true })
-	SetTraceProvider(provider)
+	Update(func(c zerolog.Context) zerolog.Context {
+		return c.Str("static", "value")
+	}).WithContext(ctx).Info().Str("foo", "bar").Msg("delegated")
 
-	if stub.context != tCtx {
-		t.Fatalf("expected context to be stored")
+	entry := decodeLogLine(t, buf.Bytes())
+	if entry["message"] != "delegated" {
+		t.Fatalf("unexpected message: %v", entry["message"])
 	}
-	if stub.fields == nil || len(stub.fields) != 2 || stub.fields[0] != "foo" {
-		t.Fatalf("expected With fields to be recorded, got %v", stub.fields)
+	if entry["static"] != "value" {
+		t.Fatalf("missing static field: %v", entry["static"])
 	}
-	if stub.debugCall.msg != "debug-msg" {
-		t.Fatalf("debug not delegated: %#v", stub.debugCall)
-	}
-	if stub.infoCall.msg != "info-msg" {
-		t.Fatalf("info not delegated: %#v", stub.infoCall)
-	}
-	if stub.warnCall.msg != "warn-msg" {
-		t.Fatalf("warn not delegated: %#v", stub.warnCall)
-	}
-	if stub.errorCall.msg != "error-msg" || stub.errorCall.err != err {
-		t.Fatalf("error not delegated: %#v", stub.errorCall)
-	}
-	if stub.fatalCall.msg != "fatal-msg" {
-		t.Fatalf("fatal not delegated: %#v", stub.fatalCall)
-	}
-	if stub.provider == nil {
-		t.Fatal("expected trace provider to be stored")
+	if entry["foo"] != "bar" {
+		t.Fatalf("missing foo field: %v", entry["foo"])
 	}
 }
 
@@ -175,11 +91,10 @@ func TestUseNilResetsGlobalLogger(t *testing.T) {
 		t.Fatal("expected non-nil global logger")
 	}
 
-	Debug("noop")
-	Info("noop")
-	Warn("noop")
-	Error(nil, "noop")
-	Fatal(nil, "noop")
+	Debug().Msg("noop")
+	Info().Msg("noop")
+	Warn().Msg("noop")
+	Error().Msg("noop")
 }
 
 func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
@@ -223,7 +138,7 @@ func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
 	}))
 
 	boom := errors.New("explode")
-	WithContext(ctx).Error(boom, "global-span-log", "foo", "bar")
+	WithContext(ctx).Error().Err(boom).Str("foo", "bar").Msg("global-span-log")
 
 	span.End()
 
@@ -253,12 +168,7 @@ func TestGlobalInitializesWhenUnconfigured(t *testing.T) {
 		t.Fatal("expected global logger instance")
 	}
 
-	if _, ok := log.(noopLogger); !ok {
-		t.Fatalf("expected noopLogger, got %T", log)
-	}
-
-	holder := globalLogger.Load()
-	if holder == nil || holder.logger == nil {
-		t.Fatal("expected global holder to store logger")
+	if stored := globalLogger.Load(); stored == nil {
+		t.Fatal("expected global pointer to be initialized")
 	}
 }

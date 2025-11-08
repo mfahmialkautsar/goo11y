@@ -8,6 +8,7 @@ import (
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/mfahmialkautsar/goo11y/logger"
+	"github.com/rs/zerolog"
 )
 
 // Controller manages the lifecycle of the Pyroscope profiler.
@@ -100,21 +101,33 @@ func (c *Controller) Flush(wait bool) {
 }
 
 type pyroscopeTelemetryLogger struct {
-	log logger.Logger
+	log *logger.Logger
 }
 
 func newPyroscopeTelemetryLogger() pyroscopeTelemetryLogger {
-	return pyroscopeTelemetryLogger{log: logger.With("component", "profiler")}
+	derived := logger.Update(func(ctx zerolog.Context) zerolog.Context {
+		return ctx.Str("component", "profiler")
+	})
+	return pyroscopeTelemetryLogger{log: derived}
 }
 
 func (l pyroscopeTelemetryLogger) Infof(format string, args ...interface{}) {
-	l.log.Info(fmt.Sprintf(format, args...))
+	if l.log == nil {
+		return
+	}
+	l.log.Info().Msg(fmt.Sprintf(format, args...))
 }
 
 func (l pyroscopeTelemetryLogger) Debugf(format string, args ...interface{}) {
-	l.log.Debug(fmt.Sprintf(format, args...))
+	if l.log == nil {
+		return
+	}
+	l.log.Debug().Msg(fmt.Sprintf(format, args...))
 }
 
 func (l pyroscopeTelemetryLogger) Errorf(format string, args ...interface{}) {
-	l.log.Error(nil, fmt.Sprintf(format, args...))
+	if l.log == nil {
+		return
+	}
+	l.log.Error().Msg(fmt.Sprintf(format, args...))
 }

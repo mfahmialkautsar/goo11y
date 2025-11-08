@@ -59,7 +59,13 @@ func TestLoggerAddsSpanEvents(t *testing.T) {
 		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
 	}))
 
-	log.WithContext(ctx).With("static", "value").Info("span-log", "count", 7, "ratio", 0.5, "flag", true)
+	log.WithContext(ctx).
+		Info().
+		Str("static", "value").
+		Int("count", 7).
+		Float64("ratio", 0.5).
+		Bool("flag", true).
+		Msg("span-log")
 	span.End()
 
 	spans := recorder.Ended()
@@ -126,7 +132,7 @@ func TestLoggerSpanEventDefaultName(t *testing.T) {
 		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
 	}))
 
-	log.WithContext(ctx).Info("")
+	log.WithContext(ctx).Info().Msg("")
 	span.End()
 
 	spans := recorder.Ended()
@@ -160,8 +166,11 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 		return TraceContext{TraceID: "abc", SpanID: "def"}, true
 	}))
 
-	ctxLogger := log.WithContext(context.Background()).With("foo", "bar")
-	ctxLogger.Info("message", "answer", 42)
+	ctxLogger := log.WithContext(context.Background())
+	ctxLogger.Info().
+		Str("foo", "bar").
+		Int("answer", 42).
+		Msg("message")
 
 	entry := decodeLogLine(t, buf.Bytes())
 	if got := entry[traceIDField]; got != "abc" {
@@ -186,7 +195,7 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 	logNoCtx.SetTraceProvider(TraceProviderFunc(func(context.Context) (TraceContext, bool) {
 		return TraceContext{TraceID: "zzz", SpanID: "yyy"}, true
 	}))
-	logNoCtx.Info("no-context")
+	logNoCtx.Info().Msg("no-context")
 	plain := decodeLogLine(t, second.Bytes())
 	if _, ok := plain[traceIDField]; ok {
 		t.Fatalf("unexpected trace metadata in logger without context")
@@ -216,7 +225,9 @@ func TestFileLoggerWritesDailyFile(t *testing.T) {
 	}
 
 	message := fmt.Sprintf("file-log-%d", time.Now().UnixNano())
-	log.Info(message, "component", "logger")
+	log.Info().
+		Str("component", "logger").
+		Msg(message)
 
 	expectedPath := filepath.Join(dir, time.Now().Format("2006-01-02")+".log")
 	entry := waitForFileEntry(t, expectedPath, message)
@@ -251,7 +262,7 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 	}
 
 	log.SetTraceProvider(nil)
-	log.Info("independent")
+	log.Info().Msg("independent")
 
 	entry := decodeLogLine(t, standalone.Bytes())
 	if _, ok := entry[traceIDField]; ok {
@@ -275,11 +286,7 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 		return TraceContext{TraceID: "trace", SpanID: "span"}, true
 	}))
 
-	loggerWithCtx := withProvider.WithContext(context.Background())
-	if zl, ok := loggerWithCtx.(*zerologLogger); ok {
-		zl.ctx = nil
-	}
-	loggerWithCtx.Info("nil-context")
+	withProvider.WithContext(nil).Info().Msg("nil-context")
 	ctxEntry := decodeLogLine(t, nilCtx.Bytes())
 	if _, ok := ctxEntry[traceIDField]; ok {
 		t.Fatalf("unexpected trace_id with nil context: %v", ctxEntry[traceIDField])

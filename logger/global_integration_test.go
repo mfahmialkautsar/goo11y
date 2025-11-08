@@ -41,7 +41,7 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 	}
 
 	message := fmt.Sprintf("global-file-integration-%d", time.Now().UnixNano())
-	Info(message, "test_case", "global_file")
+	Info().Str("test_case", "global_file").Msg(message)
 
 	path := filepath.Join(dir, time.Now().Format("2006-01-02")+".log")
 	entry := waitForFileEntry(t, path, message)
@@ -91,7 +91,7 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 		t.Fatal("expected logger instance")
 	}
 
-	WithContext(context.Background()).With("test_case", "global_logger").Info(message)
+	WithContext(context.Background()).Info().Str("test_case", "global_logger").Msg(message)
 
 	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
 		t.Fatalf("find log entry: %v", err)
