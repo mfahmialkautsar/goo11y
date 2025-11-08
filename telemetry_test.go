@@ -19,6 +19,7 @@ import (
 	"github.com/mfahmialkautsar/goo11y/tracer"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -72,8 +73,22 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
-	if events := spans[0].Events(); len(events) != 0 {
-		t.Fatalf("expected 0 span events, got %d", len(events))
+	events := spans[0].Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 span event, got %d", len(events))
+	}
+	if events[0].Name != "log.warn" {
+		t.Fatalf("unexpected span event name: %s", events[0].Name)
+	}
+	attrs := attributeStringMap(events[0].Attributes)
+	if attrs["log.severity"] != "warn" {
+		t.Fatalf("unexpected span severity: %v", attrs["log.severity"])
+	}
+	if attrs["log.message"] != "telemetry-warn-message" {
+		t.Fatalf("unexpected span message attribute: %v", attrs["log.message"])
+	}
+	if spans[0].Status().Code != codes.Unset {
+		t.Fatalf("unexpected span status: %v", spans[0].Status().Code)
 	}
 }
 
@@ -164,6 +179,14 @@ func TestBuildResourceComposes(t *testing.T) {
 			t.Fatalf("attribute %s mismatch: %v", key, got)
 		}
 	}
+}
+
+func attributeStringMap(attrs []attribute.KeyValue) map[string]string {
+	result := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		result[string(attr.Key)] = attr.Value.AsString()
+	}
+	return result
 }
 
 func TestBuildResourceOverrideError(t *testing.T) {

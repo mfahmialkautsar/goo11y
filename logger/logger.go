@@ -11,11 +11,16 @@ import (
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/pkgerrors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
-	traceIDField = "trace_id"
-	spanIDField  = "span_id"
+	traceIDField   = "trace_id"
+	spanIDField    = "span_id"
+	warnEventName  = "log.warn"
+	errorEventName = "log.error"
 )
 
 // Logger wraps zerolog.Logger while enriching events with trace metadata when context is provided.
@@ -112,6 +117,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 		Timestamp().
 		Str("service_name", cfg.ServiceName).
 		Logger()
+	base = base.Hook(spanHook{})
 
 	level, err := zerolog.ParseLevel(strings.ToLower(cfg.Level))
 	if err != nil {
@@ -153,7 +159,7 @@ func (l *Logger) Debug() *zerolog.Event {
 	if l == nil {
 		return nil
 	}
-	return l.decorate(l.zl.Debug().Caller(1))
+	return l.decorate(zerolog.DebugLevel, l.zl.Debug().Caller(1))
 }
 
 // Info opens an info level event.
@@ -161,7 +167,7 @@ func (l *Logger) Info() *zerolog.Event {
 	if l == nil {
 		return nil
 	}
-	return l.decorate(l.zl.Info().Caller(1))
+	return l.decorate(zerolog.InfoLevel, l.zl.Info().Caller(1))
 }
 
 // Warn opens a warn level event.
@@ -169,7 +175,7 @@ func (l *Logger) Warn() *zerolog.Event {
 	if l == nil {
 		return nil
 	}
-	return l.decorate(l.zl.Warn().Caller(1))
+	return l.decorate(zerolog.WarnLevel, l.zl.Warn().Caller(1))
 }
 
 // Error opens an error level event.
@@ -177,7 +183,7 @@ func (l *Logger) Error() *zerolog.Event {
 	if l == nil {
 		return nil
 	}
-	return l.decorate(l.zl.Error().Caller(1))
+	return l.decorate(zerolog.ErrorLevel, l.zl.Error().Stack().Caller(1))
 }
 
 // Fatal opens a fatal level event.
@@ -185,7 +191,7 @@ func (l *Logger) Fatal() *zerolog.Event {
 	if l == nil {
 		return nil
 	}
-	return l.decorate(l.zl.Fatal().Caller(1))
+	return l.decorate(zerolog.FatalLevel, l.zl.Fatal().Stack().Caller(1))
 }
 
 // WithLevel opens an event at the specified level.
@@ -193,7 +199,11 @@ func (l *Logger) WithLevel(level zerolog.Level) *zerolog.Event {
 	if l == nil {
 		return nil
 	}
-	return l.decorate(l.zl.WithLevel(level).Caller(1))
+	event := l.zl.WithLevel(level)
+	if level >= zerolog.ErrorLevel {
+		event = event.Stack()
+	}
+	return l.decorate(level, event.Caller(1))
 }
 
 // SetTraceProvider configures trace metadata injection for subsequent log events.
@@ -207,8 +217,13 @@ func (l *Logger) SetTraceProvider(provider TraceProvider) {
 	l.core.traceProvider.Store(provider)
 }
 
-func (l *Logger) decorate(event *zerolog.Event) *zerolog.Event {
-	if event == nil || l == nil || l.ctx == nil {
+func (l *Logger) decorate(_ zerolog.Level, event *zerolog.Event) *zerolog.Event {
+	if event == nil || l == nil {
+		return event
+	}
+	if l.ctx != nil {
+		event = event.Ctx(l.ctx)
+	} else {
 		return event
 	}
 	provider, _ := l.core.traceProvider.Load().(TraceProvider)
@@ -226,6 +241,32 @@ func (l *Logger) decorate(event *zerolog.Event) *zerolog.Event {
 		event.Str(spanIDField, traceCtx.SpanID)
 	}
 	return event
+}
+
+type spanHook struct{}
+
+func (spanHook) Run(event *zerolog.Event, level zerolog.Level, msg string) {
+	ctx := event.GetCtx()
+	if ctx == nil {
+		return
+	}
+	span := trace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return
+	}
+	attrs := []attribute.KeyValue{
+		attribute.String("log.severity", level.String()),
+	}
+	if msg != "" {
+		attrs = append(attrs, attribute.String("log.message", msg))
+	}
+	switch {
+	case level >= zerolog.ErrorLevel:
+		span.SetStatus(codes.Error, msg)
+		span.AddEvent(errorEventName, trace.WithAttributes(attrs...))
+	case level == zerolog.WarnLevel:
+		span.AddEvent(warnEventName, trace.WithAttributes(attrs...))
+	}
 }
 
 func (l *Logger) clone() *Logger {

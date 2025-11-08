@@ -11,15 +11,36 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/internal/attrutil"
+	pkgerrors "github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func nestedInnerError() error {
+	return pkgerrors.New("nested boom")
+}
+
+func nestedMiddleError() error {
+	if err := nestedInnerError(); err != nil {
+		return pkgerrors.WithMessage(err, "middle failed")
+	}
+	return nil
+}
+
+func nestedOuterError() error {
+	if err := nestedMiddleError(); err != nil {
+		return pkgerrors.WithMessage(err, "outer failed")
+	}
+	return nil
+}
 
 func TestLoggerAddsSpanEvents(t *testing.T) {
 	var buf bytes.Buffer
@@ -294,6 +315,175 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 	if _, ok := ctxEntry[spanIDField]; ok {
 		t.Fatalf("unexpected span_id with nil context: %v", ctxEntry[spanIDField])
 	}
+}
+
+func TestLoggerErrorIncludesStackTrace(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "stack-logger",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+	}
+
+	log, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	boom := nestedOuterError()
+	log.Error().Err(boom).Msg("stacked")
+
+	entry := decodeLogLine(t, buf.Bytes())
+	stack, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
+	}
+	if len(stack) == 0 {
+		t.Fatalf("expected non-empty stack trace")
+	}
+	funcs := stackFunctionNames(t, stack)
+	assertStackContains(t, funcs, "nestedInnerError")
+	assertStackContains(t, funcs, "nestedMiddleError")
+	assertStackContains(t, funcs, "nestedOuterError")
+	if msg, ok := entry["error"].(string); !ok || !strings.Contains(msg, "nested boom") || !strings.Contains(msg, "outer failed") {
+		t.Fatalf("unexpected error field: %v", entry["error"])
+	}
+}
+
+func TestLoggerWarnAndErrorMarkSpan(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "span-logger",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+		Level:       "debug",
+	}
+
+	log, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+	})
+
+	tracer := tp.Tracer("logger/span-status")
+
+	log.SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
+		sc := trace.SpanContextFromContext(ctx)
+		if !sc.IsValid() {
+			return TraceContext{}, false
+		}
+		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
+	}))
+
+	warnCtx, warnSpan := tracer.Start(context.Background(), "warn-span")
+	log.WithContext(warnCtx).Warn().Msg("warn message")
+	warnSpan.End()
+
+	errorCtx, errorSpan := tracer.Start(context.Background(), "error-span")
+	log.WithContext(errorCtx).Error().Err(nestedOuterError()).Msg("error message")
+	errorSpan.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 2 {
+		t.Fatalf("expected 2 spans, got %d", len(spans))
+	}
+
+	warnSnapshot := spanByName(t, spans, "warn-span")
+	warnEvents := warnSnapshot.Events()
+	if len(warnEvents) != 1 {
+		t.Fatalf("expected 1 warn event, got %d", len(warnEvents))
+	}
+	if warnEvents[0].Name != warnEventName {
+		t.Fatalf("unexpected warn event name: %s", warnEvents[0].Name)
+	}
+	warnAttrs := attributesToMap(warnEvents[0].Attributes)
+	if warnAttrs["log.severity"] != "warn" {
+		t.Fatalf("unexpected warn severity: %v", warnAttrs["log.severity"])
+	}
+	if warnAttrs["log.message"] != "warn message" {
+		t.Fatalf("unexpected warn message attr: %v", warnAttrs["log.message"])
+	}
+	if warnSnapshot.Status().Code != codes.Unset {
+		t.Fatalf("unexpected warn status: %v", warnSnapshot.Status().Code)
+	}
+
+	errorSnapshot := spanByName(t, spans, "error-span")
+	errorEvents := errorSnapshot.Events()
+	if len(errorEvents) != 1 {
+		t.Fatalf("expected 1 error event, got %d", len(errorEvents))
+	}
+	if errorEvents[0].Name != errorEventName {
+		t.Fatalf("unexpected error event name: %s", errorEvents[0].Name)
+	}
+	errorAttrs := attributesToMap(errorEvents[0].Attributes)
+	if errorAttrs["log.severity"] != "error" {
+		t.Fatalf("unexpected error severity: %v", errorAttrs["log.severity"])
+	}
+	if errorAttrs["log.message"] != "error message" {
+		t.Fatalf("unexpected error message attr: %v", errorAttrs["log.message"])
+	}
+	if errorSnapshot.Status().Code != codes.Error {
+		t.Fatalf("expected error status code error, got %v", errorSnapshot.Status().Code)
+	}
+}
+
+func spanByName(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+	for _, span := range spans {
+		if span.Name() == name {
+			return span
+		}
+	}
+	t.Fatalf("span %s not found", name)
+	return nil
+}
+
+func attributesToMap(attrs []attribute.KeyValue) map[string]string {
+	result := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		result[string(attr.Key)] = attr.Value.AsString()
+	}
+	return result
+}
+
+func stackFunctionNames(t *testing.T, stack []any) []string {
+	t.Helper()
+	names := make([]string, 0, len(stack))
+	for _, frame := range stack {
+		frameMap, ok := frame.(map[string]any)
+		if !ok {
+			continue
+		}
+		if fn, ok := frameMap["func"].(string); ok {
+			names = append(names, fn)
+		}
+	}
+	return names
+}
+
+func assertStackContains(t *testing.T, frames []string, want string) {
+	t.Helper()
+	for _, fn := range frames {
+		if strings.Contains(fn, want) {
+			return
+		}
+	}
+	t.Fatalf("stack missing function %s in %v", want, frames)
 }
 
 func decodeLogLine(t *testing.T, line []byte) map[string]any {

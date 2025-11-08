@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -146,8 +148,22 @@ func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
-	if events := spans[0].Events(); len(events) != 0 {
-		t.Fatalf("expected 0 span events, got %d", len(events))
+	events := spans[0].Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 error event, got %d", len(events))
+	}
+	if events[0].Name != errorEventName {
+		t.Fatalf("unexpected error event name: %s", events[0].Name)
+	}
+	attrs := attributesToMap(events[0].Attributes)
+	if attrs["log.severity"] != "error" {
+		t.Fatalf("unexpected error severity: %v", attrs["log.severity"])
+	}
+	if attrs["log.message"] != "global-span-log" {
+		t.Fatalf("unexpected error message attr: %v", attrs["log.message"])
+	}
+	if spans[0].Status().Code != codes.Error {
+		t.Fatalf("expected span status error, got %v", spans[0].Status().Code)
 	}
 
 	entry := decodeLogLine(t, buf.Bytes())
@@ -170,5 +186,47 @@ func TestGlobalInitializesWhenUnconfigured(t *testing.T) {
 
 	if stored := globalLogger.Load(); stored == nil {
 		t.Fatal("expected global pointer to be initialized")
+	}
+}
+
+func TestGlobalErrorIncludesStackTrace(t *testing.T) {
+	Use(nil)
+	t.Cleanup(func() { Use(nil) })
+
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "global-stack",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+	}
+
+	log, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+	Use(log)
+
+	boom := nestedOuterError()
+	Error().Err(boom).Msg("global-stacked")
+
+	entry := decodeLogLine(t, buf.Bytes())
+	stack, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
+	}
+	if len(stack) == 0 {
+		t.Fatalf("expected non-empty stack trace")
+	}
+	funcs := stackFunctionNames(t, stack)
+	assertStackContains(t, funcs, "nestedInnerError")
+	assertStackContains(t, funcs, "nestedMiddleError")
+	assertStackContains(t, funcs, "nestedOuterError")
+	if msg, ok := entry["error"].(string); !ok || !strings.Contains(msg, "nested boom") || !strings.Contains(msg, "outer failed") {
+		t.Fatalf("unexpected error field: %v", entry["error"])
 	}
 }

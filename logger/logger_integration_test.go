@@ -10,6 +10,7 @@ import (
 
 	"github.com/mfahmialkautsar/goo11y/constant"
 	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -148,7 +149,21 @@ func TestLoggerSpanEventsIntegration(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("expected 1 span, got %d", len(spans))
 	}
-	if events := spans[0].Events(); len(events) != 0 {
-		t.Fatalf("expected 0 span events, got %d", len(events))
+	events := spans[0].Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 span event, got %d", len(events))
+	}
+	if events[0].Name != warnEventName {
+		t.Fatalf("unexpected event name: %s", events[0].Name)
+	}
+	attrs := attributesToMap(events[0].Attributes)
+	if attrs["log.severity"] != "warn" {
+		t.Fatalf("unexpected warn severity: %v", attrs["log.severity"])
+	}
+	if attrs["log.message"] != "warn-event" {
+		t.Fatalf("unexpected warn message attr: %v", attrs["log.message"])
+	}
+	if spans[0].Status().Code != codes.Unset {
+		t.Fatalf("unexpected span status: %v", spans[0].Status().Code)
 	}
 }
