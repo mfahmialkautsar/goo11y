@@ -148,7 +148,10 @@ func TestMeterSpoolRecoversAfterFailure(t *testing.T) {
 		t.Fatalf("Setup: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = provider.Shutdown(context.Background())
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = provider.Shutdown(shutdownCtx)
+		time.Sleep(100 * time.Millisecond)
 	})
 
 	counter, err := provider.meter.Int64Counter("meter_spool_counter")

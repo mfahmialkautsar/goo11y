@@ -15,8 +15,6 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	Use(nil)
-	t.Cleanup(func() { Use(nil) })
 
 	dir := t.TempDir()
 	cfg := Config{
@@ -64,9 +62,6 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 		t.Fatalf("loki unreachable at %s: %v", queryBase, err)
 	}
 
-	Use(nil)
-	t.Cleanup(func() { Use(nil) })
-
 	serviceName := fmt.Sprintf("goo11y-it-global-logger-%d", time.Now().UnixNano())
 	message := fmt.Sprintf("global-integration-log-%d", time.Now().UnixNano())
 
@@ -91,7 +86,7 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 		t.Fatal("expected logger instance")
 	}
 
-	WithContext(context.Background()).Info().Str("test_case", "global_logger").Msg(message)
+	Info().Ctx(context.Background()).Str("test_case", "global_logger").Msg(message)
 
 	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
 		t.Fatalf("find log entry: %v", err)

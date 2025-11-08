@@ -24,7 +24,6 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
-	"go.opentelemetry.io/otel/trace"
 )
 
 func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
@@ -56,14 +55,6 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 
 	tracer := tp.Tracer("telemetry/test")
 	ctx, span := tracer.Start(context.Background(), "telemetry-warn")
-
-	log.SetTraceProvider(logger.TraceProviderFunc(func(ctx context.Context) (logger.TraceContext, bool) {
-		sc := trace.SpanContextFromContext(ctx)
-		if !sc.IsValid() {
-			return logger.TraceContext{}, false
-		}
-		return logger.TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
-	}))
 
 	warnErr := errors.New("telemetry warn")
 	tele.emitWarn(ctx, "telemetry-warn-message", warnErr)

@@ -186,27 +186,6 @@ func (t *Telemetry) configureIntegrations(cfg Config) {
 		return
 	}
 
-	if t.Logger != nil && t.Tracer != nil {
-		provider := logger.TraceProviderFunc(func(ctx context.Context) (logger.TraceContext, bool) {
-			if ctx == nil {
-				return logger.TraceContext{}, false
-			}
-			spanCtx := t.Tracer.SpanContext(ctx)
-			if !spanCtx.IsValid() {
-				return logger.TraceContext{}, false
-			}
-			return logger.TraceContext{
-				TraceID: spanCtx.TraceID().String(),
-				SpanID:  spanCtx.SpanID().String(),
-			}, true
-		})
-		if cfg.Logger.UseGlobal {
-			logger.SetTraceProvider(provider)
-		} else {
-			t.Logger.SetTraceProvider(provider)
-		}
-	}
-
 	if t.Tracer != nil && t.Profiler != nil {
 		if processor := profiler.TraceProfileSpanProcessor(); processor != nil {
 			t.Tracer.RegisterSpanProcessor(processor)
@@ -221,7 +200,7 @@ func (t *Telemetry) emitWarn(ctx context.Context, msg string, err error) {
 	if err == nil {
 		return
 	}
-	t.Logger.WithContext(ctx).Warn().Err(err).Msg(msg)
+	t.Logger.Warn().Ctx(ctx).Err(err).Msg(msg)
 }
 
 func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) {

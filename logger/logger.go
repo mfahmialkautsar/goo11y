@@ -2,15 +2,16 @@ package logger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
-	"sync/atomic"
 
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/pkgerrors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -23,48 +24,14 @@ const (
 	errorEventName = "log.error"
 )
 
-// Logger wraps zerolog.Logger while enriching events with trace metadata when context is provided.
+// Logger wraps zerolog.Logger with trace metadata injection.
 type Logger struct {
-	core *loggerCore
-	zl   zerolog.Logger
-	ctx  context.Context
+	*zerolog.Logger
+	outputs *writerRegistry
 }
-
-type loggerCore struct {
-	base          zerolog.Logger
-	outputs       *writerRegistry
-	traceProvider atomic.Value // TraceProvider
-}
-
-// TraceContext represents trace metadata injected into structured logs.
-type TraceContext struct {
-	TraceID string
-	SpanID  string
-}
-
-// TraceProvider supplies trace context for a given request context.
-type TraceProvider interface {
-	Current(ctx context.Context) (TraceContext, bool)
-}
-
-// TraceProviderFunc adapter to allow use of ordinary functions as trace providers.
-type TraceProviderFunc func(context.Context) (TraceContext, bool)
-
-// Current invokes f(ctx).
-func (f TraceProviderFunc) Current(ctx context.Context) (TraceContext, bool) {
-	return f(ctx)
-}
-
-var noopTraceProvider = TraceProviderFunc(func(context.Context) (TraceContext, bool) {
-	return TraceContext{}, false
-})
 
 // New constructs a Zerolog-backed logger based on the provided configuration.
 func New(ctx context.Context, cfg Config) (*Logger, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	cfg = cfg.ApplyDefaults()
 
 	if err := cfg.Validate(); err != nil {
@@ -76,7 +43,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 	}
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
-	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	zerolog.ErrorStackMarshaler = marshalStackTrace
 
 	fanout := newWriterRegistry()
 	for idx, w := range cfg.Writers {
@@ -125,122 +92,53 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 	}
 	base = base.Level(level)
 
-	core := &loggerCore{base: base, outputs: fanout}
-	core.traceProvider.Store(noopTraceProvider)
+	logger := &Logger{
+		Logger:  &base,
+		outputs: fanout,
+	}
 
-	otlputil.SetExportFailureHandler(exportFailureLogger(core))
+	otlputil.SetExportFailureHandler(exportFailureLogger(logger))
 
-	return &Logger{core: core, zl: base}, nil
+	return logger, nil
 }
 
-// WithContext binds a context to the logger for subsequent trace extraction.
-func (l *Logger) WithContext(ctx context.Context) *Logger {
-	if l == nil {
-		return nil
-	}
-	clone := l.clone()
-	clone.ctx = ctx
-	return clone
-}
-
-// Update returns a logger with additional contextual fields provided by builder.
-func (l *Logger) Update(builder func(zerolog.Context) zerolog.Context) *Logger {
-	if l == nil || builder == nil {
-		return l
-	}
-	clone := l.clone()
-	ctx := builder(clone.zl.With())
-	clone.zl = ctx.Logger()
-	return clone
+// With returns a context for adding fields to the logger.
+func (l *Logger) With() zerolog.Context {
+	return l.Logger.With()
 }
 
 // Debug opens a debug level event.
 func (l *Logger) Debug() *zerolog.Event {
-	if l == nil {
-		return nil
-	}
-	return l.decorate(zerolog.DebugLevel, l.zl.Debug().Caller(1))
+	return l.Logger.Debug().Caller(1)
 }
 
 // Info opens an info level event.
 func (l *Logger) Info() *zerolog.Event {
-	if l == nil {
-		return nil
-	}
-	return l.decorate(zerolog.InfoLevel, l.zl.Info().Caller(1))
+	return l.Logger.Info().Caller(1)
 }
 
 // Warn opens a warn level event.
 func (l *Logger) Warn() *zerolog.Event {
-	if l == nil {
-		return nil
-	}
-	return l.decorate(zerolog.WarnLevel, l.zl.Warn().Caller(1))
+	return l.Logger.Warn().Caller(1)
 }
 
 // Error opens an error level event.
 func (l *Logger) Error() *zerolog.Event {
-	if l == nil {
-		return nil
-	}
-	return l.decorate(zerolog.ErrorLevel, l.zl.Error().Stack().Caller(1))
+	return l.Logger.Error().Stack().Caller(1)
 }
 
 // Fatal opens a fatal level event.
 func (l *Logger) Fatal() *zerolog.Event {
-	if l == nil {
-		return nil
-	}
-	return l.decorate(zerolog.FatalLevel, l.zl.Fatal().Stack().Caller(1))
+	return l.Logger.Fatal().Stack().Caller(1)
 }
 
 // WithLevel opens an event at the specified level.
 func (l *Logger) WithLevel(level zerolog.Level) *zerolog.Event {
-	if l == nil {
-		return nil
-	}
-	event := l.zl.WithLevel(level)
+	event := l.Logger.WithLevel(level)
 	if level >= zerolog.ErrorLevel {
 		event = event.Stack()
 	}
-	return l.decorate(level, event.Caller(1))
-}
-
-// SetTraceProvider configures trace metadata injection for subsequent log events.
-func (l *Logger) SetTraceProvider(provider TraceProvider) {
-	if l == nil {
-		return
-	}
-	if provider == nil {
-		provider = noopTraceProvider
-	}
-	l.core.traceProvider.Store(provider)
-}
-
-func (l *Logger) decorate(_ zerolog.Level, event *zerolog.Event) *zerolog.Event {
-	if event == nil || l == nil {
-		return event
-	}
-	if l.ctx != nil {
-		event = event.Ctx(l.ctx)
-	} else {
-		return event
-	}
-	provider, _ := l.core.traceProvider.Load().(TraceProvider)
-	if provider == nil {
-		return event
-	}
-	traceCtx, ok := provider.Current(l.ctx)
-	if !ok {
-		return event
-	}
-	if traceCtx.TraceID != "" {
-		event.Str(traceIDField, traceCtx.TraceID)
-	}
-	if traceCtx.SpanID != "" {
-		event.Str(spanIDField, traceCtx.SpanID)
-	}
-	return event
+	return event.Caller(1)
 }
 
 type spanHook struct{}
@@ -250,6 +148,19 @@ func (spanHook) Run(event *zerolog.Event, level zerolog.Level, msg string) {
 	if ctx == nil {
 		return
 	}
+
+	spanCtx := trace.SpanContextFromContext(ctx)
+	if spanCtx.IsValid() {
+		traceID := spanCtx.TraceID().String()
+		spanID := spanCtx.SpanID().String()
+		if traceID != "" {
+			event.Str(traceIDField, traceID)
+		}
+		if spanID != "" {
+			event.Str(spanIDField, spanID)
+		}
+	}
+
 	span := trace.SpanFromContext(ctx)
 	if !span.IsRecording() {
 		return
@@ -269,23 +180,15 @@ func (spanHook) Run(event *zerolog.Event, level zerolog.Level, msg string) {
 	}
 }
 
-func (l *Logger) clone() *Logger {
-	if l == nil {
-		return nil
-	}
-	clone := *l
-	return &clone
-}
-
-func exportFailureLogger(core *loggerCore) func(component, transport string, err error) {
+func exportFailureLogger(log *Logger) func(component, transport string, err error) {
 	return func(component, transport string, err error) {
-		if err == nil || core == nil {
+		if err == nil || log == nil {
 			return
 		}
-		logger := core.base
+		logger := *log.Logger
 		exclusions := failureExclusions(component, transport)
-		if core.outputs != nil && len(exclusions) > 0 {
-			logger = logger.Output(core.outputs.writerExcept(exclusions...))
+		if log.outputs != nil && len(exclusions) > 0 {
+			logger = logger.Output(log.outputs.writerExcept(exclusions...))
 		}
 		event := logger.Error()
 		if component != "" {
@@ -398,13 +301,87 @@ func (w fanoutWriter) Write(p []byte) (int, error) {
 
 type nilWriter struct{}
 
-func (nilWriter) Write(p []byte) (int, error) {
-	return len(p), nil
+type stackTracer interface {
+	StackTrace() pkgerrors.StackTrace
 }
 
-func newNoopLogger() *Logger {
-	base := zerolog.New(nilWriter{})
-	core := &loggerCore{base: base, outputs: newWriterRegistry()}
-	core.traceProvider.Store(noopTraceProvider)
-	return &Logger{core: core, zl: base}
+func frameLocation(frame runtime.Frame) string {
+	if frame.File == "" {
+		return fmt.Sprintf(":%d", frame.Line)
+	}
+	if frame.Line <= 0 {
+		return frame.File
+	}
+	return fmt.Sprintf("%s:%d", frame.File, frame.Line)
+}
+
+func marshalStackTrace(err error) interface{} {
+	if err == nil {
+		return nil
+	}
+	seen := make(map[error]struct{})
+	queue := []error{err}
+	var collected []runtime.Frame
+	frameSeen := make(map[string]struct{})
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current == nil {
+			continue
+		}
+		if _, ok := seen[current]; ok {
+			continue
+		}
+		seen[current] = struct{}{}
+
+		if tracer, ok := current.(stackTracer); ok {
+			pcs := make([]uintptr, 0, len(tracer.StackTrace()))
+			for _, frame := range tracer.StackTrace() {
+				pcs = append(pcs, uintptr(frame)-1)
+			}
+			if len(pcs) > 0 {
+				iter := runtime.CallersFrames(pcs)
+				for {
+					frame, more := iter.Next()
+					if frame.Function != "" || frame.File != "" {
+						key := fmt.Sprintf("%s|%s|%d", frame.Function, frame.File, frame.Line)
+						if _, exists := frameSeen[key]; !exists {
+							frameSeen[key] = struct{}{}
+							collected = append(collected, frame)
+						}
+					}
+					if !more {
+						break
+					}
+				}
+			}
+		}
+
+		if unwrapper, ok := current.(interface{ Unwrap() []error }); ok {
+			queue = append(queue, unwrapper.Unwrap()...)
+			continue
+		}
+		if next := errors.Unwrap(current); next != nil {
+			queue = append(queue, next)
+		}
+	}
+
+	if len(collected) == 0 {
+		return nil
+	}
+
+	result := make([]map[string]any, 0, len(collected))
+	for _, frame := range collected {
+		entry := map[string]any{"location": frameLocation(frame)}
+		if frame.Function != "" {
+			entry["function"] = frame.Function
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
+func (nilWriter) Write(p []byte) (int, error) {
+	return len(p), nil
 }

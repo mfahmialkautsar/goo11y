@@ -21,13 +21,14 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 )
 
+//go:noinline
 func nestedInnerError() error {
 	return pkgerrors.New("nested boom")
 }
 
+//go:noinline
 func nestedMiddleError() error {
 	if err := nestedInnerError(); err != nil {
 		return pkgerrors.WithMessage(err, "middle failed")
@@ -35,6 +36,7 @@ func nestedMiddleError() error {
 	return nil
 }
 
+//go:noinline
 func nestedOuterError() error {
 	if err := nestedMiddleError(); err != nil {
 		return pkgerrors.WithMessage(err, "outer failed")
@@ -42,7 +44,7 @@ func nestedOuterError() error {
 	return nil
 }
 
-func TestLoggerAddsSpanEvents(t *testing.T) {
+func TestLoggerWithTracing(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := Config{
 		Enabled:     true,
@@ -72,16 +74,8 @@ func TestLoggerAddsSpanEvents(t *testing.T) {
 	traceID := span.SpanContext().TraceID().String()
 	spanID := span.SpanContext().SpanID().String()
 
-	log.SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
-		sc := trace.SpanContextFromContext(ctx)
-		if !sc.IsValid() {
-			return TraceContext{}, false
-		}
-		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
-	}))
-
-	log.WithContext(ctx).
-		Info().
+	log.Info().
+		Ctx(ctx).
 		Str("static", "value").
 		Int("count", 7).
 		Float64("ratio", 0.5).
@@ -145,15 +139,8 @@ func TestLoggerSpanEventDefaultName(t *testing.T) {
 
 	tracer := tp.Tracer("logger/test-default")
 	ctx, span := tracer.Start(context.Background(), "log-span-default")
-	log.SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
-		sc := trace.SpanContextFromContext(ctx)
-		if !sc.IsValid() {
-			return TraceContext{}, false
-		}
-		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
-	}))
 
-	log.WithContext(ctx).Info().Msg("")
+	log.Info().Ctx(ctx).Msg("")
 	span.End()
 
 	spans := recorder.Ended()
@@ -183,21 +170,27 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 		t.Fatal("expected logger instance")
 	}
 
-	log.SetTraceProvider(TraceProviderFunc(func(context.Context) (TraceContext, bool) {
-		return TraceContext{TraceID: "abc", SpanID: "def"}, true
-	}))
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
-	ctxLogger := log.WithContext(context.Background())
-	ctxLogger.Info().
+	tracer := tp.Tracer("logger/test-metadata")
+	ctx, span := tracer.Start(context.Background(), "meta-span")
+	traceID := span.SpanContext().TraceID().String()
+	spanID := span.SpanContext().SpanID().String()
+
+	log.Info().
+		Ctx(ctx).
 		Str("foo", "bar").
 		Int("answer", 42).
 		Msg("message")
+	span.End()
 
 	entry := decodeLogLine(t, buf.Bytes())
-	if got := entry[traceIDField]; got != "abc" {
+	if got := entry[traceIDField]; got != traceID {
 		t.Fatalf("unexpected trace_id: %v", got)
 	}
-	if got := entry[spanIDField]; got != "def" {
+	if got := entry[spanIDField]; got != spanID {
 		t.Fatalf("unexpected span_id: %v", got)
 	}
 	if got := entry["foo"]; got != "bar" {
@@ -213,9 +206,6 @@ func TestLoggerInjectsTraceMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	logNoCtx.SetTraceProvider(TraceProviderFunc(func(context.Context) (TraceContext, bool) {
-		return TraceContext{TraceID: "zzz", SpanID: "yyy"}, true
-	}))
 	logNoCtx.Info().Msg("no-context")
 	plain := decodeLogLine(t, second.Bytes())
 	if _, ok := plain[traceIDField]; ok {
@@ -282,7 +272,6 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 		t.Fatal("expected logger instance")
 	}
 
-	log.SetTraceProvider(nil)
 	log.Info().Msg("independent")
 
 	entry := decodeLogLine(t, standalone.Bytes())
@@ -293,22 +282,18 @@ func TestLoggerIndependenceWithoutContext(t *testing.T) {
 		t.Fatalf("unexpected span_id without context: %v", entry[spanIDField])
 	}
 
-	var nilCtx bytes.Buffer
-	cfg.Writers = []io.Writer{&nilCtx}
-	withProvider, err := New(context.Background(), cfg)
+	var nilBuffer bytes.Buffer
+	cfg.Writers = []io.Writer{&nilBuffer}
+	withCtx, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if withProvider == nil {
-		t.Fatal("expected logger instance with provider")
+	if withCtx == nil {
+		t.Fatal("expected logger instance")
 	}
 
-	withProvider.SetTraceProvider(TraceProviderFunc(func(context.Context) (TraceContext, bool) {
-		return TraceContext{TraceID: "trace", SpanID: "span"}, true
-	}))
-
-	withProvider.WithContext(nil).Info().Msg("nil-context")
-	ctxEntry := decodeLogLine(t, nilCtx.Bytes())
+	withCtx.Info().Msg("nil-context")
+	ctxEntry := decodeLogLine(t, nilBuffer.Bytes())
 	if _, ok := ctxEntry[traceIDField]; ok {
 		t.Fatalf("unexpected trace_id with nil context: %v", ctxEntry[traceIDField])
 	}
@@ -346,12 +331,73 @@ func TestLoggerErrorIncludesStackTrace(t *testing.T) {
 	if len(stack) == 0 {
 		t.Fatalf("expected non-empty stack trace")
 	}
+	frames := decodeStackFrames(t, stack)
+	assertStackHasFileSuffix(t, frames, filepath.Join("logger", "logger_test.go"))
+	outer := findStackFrame(t, frames, "nestedOuterError")
+	if !strings.Contains(outer.Location, "logger/logger_test.go:") {
+		t.Fatalf("unexpected outer frame location: %s", outer.Location)
+	}
+	if outer.Function != "github.com/mfahmialkautsar/goo11y/logger.nestedOuterError" {
+		t.Fatalf("unexpected outer frame function: %s", outer.Function)
+	}
+	middle := findStackFrame(t, frames, "nestedMiddleError")
+	if !strings.Contains(middle.Location, "logger/logger_test.go:") {
+		t.Fatalf("unexpected middle frame location: %s", middle.Location)
+	}
+	inner := findStackFrame(t, frames, "nestedInnerError")
+	if !strings.Contains(inner.Location, "logger/logger_test.go:") {
+		t.Fatalf("unexpected inner frame location: %s", inner.Location)
+	}
 	funcs := stackFunctionNames(t, stack)
 	assertStackContains(t, funcs, "nestedInnerError")
 	assertStackContains(t, funcs, "nestedMiddleError")
 	assertStackContains(t, funcs, "nestedOuterError")
 	if msg, ok := entry["error"].(string); !ok || !strings.Contains(msg, "nested boom") || !strings.Contains(msg, "outer failed") {
 		t.Fatalf("unexpected error field: %v", entry["error"])
+	}
+}
+
+func TestLoggerStackMethodUsesErrorValue(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "stack-value",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+	}
+
+	log, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	boom := nestedOuterError()
+	log.Error().Err(boom).Msg("stacked value")
+
+	entry := decodeLogLine(t, buf.Bytes())
+	rawStack, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
+	}
+	frames := decodeStackFrames(t, rawStack)
+	if len(frames) == 0 {
+		t.Fatalf("expected non-empty stack trace")
+	}
+	outer := findStackFrame(t, frames, "nestedOuterError")
+	if !strings.Contains(outer.Location, "logger/logger_test.go:") {
+		t.Fatalf("unexpected outer location: %s", outer.Location)
+	}
+	middle := findStackFrame(t, frames, "nestedMiddleError")
+	if !strings.Contains(middle.Location, "logger/logger_test.go:") {
+		t.Fatalf("unexpected middle location: %s", middle.Location)
+	}
+	inner := findStackFrame(t, frames, "nestedInnerError")
+	if !strings.Contains(inner.Location, "logger/logger_test.go:") {
+		t.Fatalf("unexpected inner location: %s", inner.Location)
 	}
 }
 
@@ -382,20 +428,12 @@ func TestLoggerWarnAndErrorMarkSpan(t *testing.T) {
 
 	tracer := tp.Tracer("logger/span-status")
 
-	log.SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
-		sc := trace.SpanContextFromContext(ctx)
-		if !sc.IsValid() {
-			return TraceContext{}, false
-		}
-		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
-	}))
-
 	warnCtx, warnSpan := tracer.Start(context.Background(), "warn-span")
-	log.WithContext(warnCtx).Warn().Msg("warn message")
+	log.Warn().Ctx(warnCtx).Msg("warn message")
 	warnSpan.End()
 
 	errorCtx, errorSpan := tracer.Start(context.Background(), "error-span")
-	log.WithContext(errorCtx).Error().Err(nestedOuterError()).Msg("error message")
+	log.Error().Ctx(errorCtx).Err(nestedOuterError()).Msg("error message")
 	errorSpan.End()
 
 	spans := recorder.Ended()
@@ -461,19 +499,108 @@ func attributesToMap(attrs []attribute.KeyValue) map[string]string {
 	return result
 }
 
-func stackFunctionNames(t *testing.T, stack []any) []string {
+type logStackFrame struct {
+	Location string
+	File     string
+	Line     int
+	Function string
+}
+
+func decodeStackFrames(t *testing.T, stack []any) []logStackFrame {
 	t.Helper()
-	names := make([]string, 0, len(stack))
-	for _, frame := range stack {
-		frameMap, ok := frame.(map[string]any)
+	frames := make([]logStackFrame, 0, len(stack))
+	for _, entry := range stack {
+		frameMap, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
-		if fn, ok := frameMap["func"].(string); ok {
-			names = append(names, fn)
+		frame := logStackFrame{}
+		if location, ok := frameMap["location"].(string); ok {
+			frame.Location = location
+			if file, line, _, ok := parseStackLocation(location); ok {
+				frame.File = file
+				frame.Line = line
+			}
 		}
+		if fn, ok := frameMap["function"].(string); ok {
+			frame.Function = fn
+		}
+		frames = append(frames, frame)
+	}
+	return frames
+}
+
+func assertStackHasFileSuffix(t *testing.T, frames []logStackFrame, suffix string) {
+	t.Helper()
+	for _, frame := range frames {
+		if !strings.HasSuffix(frame.File, suffix) {
+			continue
+		}
+		if !filepath.IsAbs(frame.File) {
+			t.Fatalf("stack file not absolute: %s", frame.File)
+		}
+		if frame.Line <= 0 {
+			t.Fatalf("stack line not positive for %s: %d", frame.File, frame.Line)
+		}
+		if frame.Location == "" {
+			t.Fatalf("stack missing location string for %s", frame.File)
+		}
+		return
+	}
+	t.Fatalf("stack missing file suffix %s in %v", suffix, frames)
+}
+
+func stackFunctionNames(t *testing.T, stack []any) []string {
+	t.Helper()
+	frames := decodeStackFrames(t, stack)
+	names := make([]string, 0, len(frames))
+	for _, frame := range frames {
+		if frame.Function == "" {
+			continue
+		}
+		names = append(names, frame.Function)
 	}
 	return names
+}
+
+func findStackFrame(t *testing.T, frames []logStackFrame, contains string) logStackFrame {
+	t.Helper()
+	for _, frame := range frames {
+		if strings.Contains(frame.Function, contains) {
+			return frame
+		}
+	}
+	t.Fatalf("stack missing function %s in %v", contains, frames)
+	return logStackFrame{}
+}
+
+func parseStackLocation(location string) (file string, line int, column int, ok bool) {
+	column = -1
+	if location == "" {
+		return "", 0, column, false
+	}
+	last := strings.LastIndex(location, ":")
+	if last == -1 {
+		return location, 0, column, false
+	}
+	tail := location[last+1:]
+	if val, err := strconv.Atoi(tail); err == nil {
+		// tail might be line or column. Assume line first, adjust if column present.
+		filePart := location[:last]
+		line = val
+		secondLast := strings.LastIndex(filePart, ":")
+		if secondLast != -1 {
+			if colVal, err := strconv.Atoi(filePart[secondLast+1:]); err == nil {
+				column = line
+				line = colVal
+				filePart = filePart[:secondLast]
+			} else {
+				column = -1
+			}
+		}
+		return filePart, line, column, true
+	}
+	return location, 0, column, false
 }
 
 func assertStackContains(t *testing.T, frames []string, want string) {

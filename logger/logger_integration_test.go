@@ -13,7 +13,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 )
 
 func TestFileLoggingIntegration(t *testing.T) {
@@ -93,7 +92,7 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 		t.Fatal("expected logger instance")
 	}
 
-	log.WithContext(context.Background()).Info().Str("test_case", "logger").Msg(message)
+	log.Info().Ctx(context.Background()).Str("test_case", "logger").Msg(message)
 
 	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
 		t.Fatalf("find log entry: %v", err)
@@ -131,17 +130,8 @@ func TestLoggerSpanEventsIntegration(t *testing.T) {
 	tracer := tp.Tracer("logger/integration")
 	ctx, span := tracer.Start(context.Background(), "logger-span-events")
 
-	log.SetTraceProvider(TraceProviderFunc(func(ctx context.Context) (TraceContext, bool) {
-		sc := trace.SpanContextFromContext(ctx)
-		if !sc.IsValid() {
-			return TraceContext{}, false
-		}
-		return TraceContext{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String()}, true
-	}))
-
-	contextual := log.WithContext(ctx)
-	contextual.Debug().Msg("debug-event")
-	contextual.Warn().Str("test_case", "logger_span_events").Msg("warn-event")
+	log.Debug().Ctx(ctx).Msg("debug-event")
+	log.Warn().Ctx(ctx).Str("test_case", "logger_span_events").Msg("warn-event")
 
 	span.End()
 
