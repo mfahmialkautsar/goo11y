@@ -30,10 +30,10 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 		},
 	}
 
-	log, err := Init(context.Background(), cfg)
-	if err != nil {
+	if err := Init(context.Background(), cfg); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	log := Global()
 	if log == nil {
 		t.Fatal("expected logger instance")
 	}
@@ -78,10 +78,10 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 		},
 	}
 
-	log, err := Init(ctx, cfg)
-	if err != nil {
+	if err := Init(ctx, cfg); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	log := Global()
 	if log == nil {
 		t.Fatal("expected logger instance")
 	}

@@ -40,7 +40,7 @@ func TestPyroscopeProfilingIntegration(t *testing.T) {
 		},
 	}
 
-	controller, err := Setup(cfg)
+	controller, err := Setup(cfg, nil)
 	if err != nil {
 		t.Fatalf("profiler setup: %v", err)
 	}

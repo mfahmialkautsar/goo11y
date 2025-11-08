@@ -12,8 +12,6 @@ import (
 )
 
 func TestInitSetsGlobalTracer(t *testing.T) {
-	Use(nil)
-	t.Cleanup(func() { Use(nil) })
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -33,11 +31,11 @@ func TestInitSetsGlobalTracer(t *testing.T) {
 		QueueDir:      t.TempDir(),
 	}
 
-	provider, err := Init(ctx, cfg, res)
-	if err != nil {
+	if err := Init(ctx, cfg, res); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	if provider == nil || provider.provider == nil {
+	provider := Global()
+	if provider == nil {
 		t.Fatal("expected tracer provider")
 	}
 	if Global() != provider {
@@ -57,11 +55,11 @@ func TestInitSetsGlobalTracer(t *testing.T) {
 
 func TestUseNilResetsGlobalTracer(t *testing.T) {
 	Use(nil)
-	if Global() == nil {
-		t.Fatal("expected placeholder tracer provider")
-	}
 
-	if err := Shutdown(context.Background()); err != nil {
-		t.Fatalf("shutdown noop tracer: %v", err)
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when accessing global tracer provider after Use(nil)")
+		}
+	}()
+	_ = Global()
 }

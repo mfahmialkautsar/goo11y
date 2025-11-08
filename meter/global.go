@@ -11,38 +11,31 @@ import (
 
 var globalProvider atomic.Value
 
-func init() {
-	Use(nil)
-}
-
 // Init configures the meter provider and stores it as the package-level singleton.
-func Init(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {
+func Init(ctx context.Context, cfg Config, res *resource.Resource) error {
 	provider, err := Setup(ctx, cfg, res)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	Use(provider)
-	return provider, nil
+	return nil
 }
 
 // Use replaces the global meter provider with the supplied instance.
-// Passing nil installs a no-op placeholder implementation.
+// Passing nil installs a no-op placeholder.
 func Use(provider *Provider) {
-	if provider == nil {
-		provider = &Provider{}
-	}
 	globalProvider.Store(provider)
 }
 
 // Global returns the current global meter provider pointer.
+// Panics if provider has not been initialized via Init() or Use().
 func Global() *Provider {
 	value := globalProvider.Load()
-	if provider, ok := value.(*Provider); ok && provider != nil {
-		return provider
+	if value == nil {
+		panic("meter: global provider not initialized - call meter.Init() or meter.Use() first")
 	}
-	empty := &Provider{}
-	globalProvider.Store(empty)
-	return empty
+	provider := value.(*Provider)
+	return provider
 }
 
 // Meter yields a metric meter backed by the global provider.

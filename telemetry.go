@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/logger"
@@ -29,10 +30,6 @@ type Telemetry struct {
 
 // New wires the requested observability components based on the provided configuration.
 func New(ctx context.Context, cfg Config) (*Telemetry, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	cfg.applyDefaults()
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -51,7 +48,8 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 			err error
 		)
 		if cfg.Logger.UseGlobal {
-			log, err = logger.Init(ctx, cfg.Logger)
+			err = logger.Init(ctx, cfg.Logger)
+			log = logger.Global()
 		} else {
 			log, err = logger.New(ctx, cfg.Logger)
 		}
@@ -67,7 +65,8 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 			err      error
 		)
 		if cfg.Tracer.UseGlobal {
-			provider, err = tracer.Init(ctx, cfg.Tracer, res)
+			err = tracer.Init(ctx, cfg.Tracer, res)
+			provider = tracer.Global()
 		} else {
 			provider, err = tracer.Setup(ctx, cfg.Tracer, res)
 		}
@@ -86,7 +85,8 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 			err      error
 		)
 		if cfg.Meter.UseGlobal {
-			provider, err = meter.Init(ctx, cfg.Meter, res)
+			err = meter.Init(ctx, cfg.Meter, res)
+			provider = meter.Global()
 		} else {
 			provider, err = meter.Setup(ctx, cfg.Meter, res)
 		}
@@ -117,9 +117,10 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 			err        error
 		)
 		if cfg.Profiler.UseGlobal {
-			controller, err = profiler.Init(cfg.Profiler)
+			err = profiler.Init(cfg.Profiler, tele.Logger)
+			controller = profiler.Global()
 		} else {
-			controller, err = profiler.Setup(cfg.Profiler)
+			controller, err = profiler.Setup(cfg.Profiler, tele.Logger)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("setup profiler: %w", err)
@@ -136,13 +137,10 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 }
 
 // Shutdown gracefully tears down all initialized components.
+// No-op if receiver is nil.
 func (t *Telemetry) Shutdown(ctx context.Context) error {
 	if t == nil {
 		return nil
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, shutdownGracePeriod)
@@ -159,6 +157,7 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 }
 
 // ForceFlush triggers immediate delivery of spans and metrics.
+// No-op if receiver is nil.
 func (t *Telemetry) ForceFlush(ctx context.Context) error {
 	if t == nil {
 		return nil
@@ -182,10 +181,6 @@ func (t *Telemetry) ForceFlush(ctx context.Context) error {
 }
 
 func (t *Telemetry) configureIntegrations(cfg Config) {
-	if t == nil {
-		return
-	}
-
 	if t.Tracer != nil && t.Profiler != nil {
 		if processor := profiler.TraceProfileSpanProcessor(); processor != nil {
 			t.Tracer.RegisterSpanProcessor(processor)
@@ -194,13 +189,14 @@ func (t *Telemetry) configureIntegrations(cfg Config) {
 }
 
 func (t *Telemetry) emitWarn(ctx context.Context, msg string, err error) {
-	if t.Logger == nil {
-		return
-	}
 	if err == nil {
 		return
 	}
-	t.Logger.Warn().Ctx(ctx).Err(err).Msg(msg)
+	if t.Logger != nil {
+		t.Logger.Warn().Ctx(ctx).Err(err).Msg(msg)
+	} else {
+		log.Printf("goo11y WARN: %s: %v", msg, err)
+	}
 }
 
 func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) {
@@ -245,17 +241,11 @@ func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) 
 		if err != nil {
 			return nil, fmt.Errorf("resource override: %w", err)
 		}
-		if base == nil {
-			base = resource.Empty()
-		}
 	}
 
 	res, err := resource.Merge(defaults, base)
 	if err != nil {
 		return nil, fmt.Errorf("resource merge override: %w", err)
-	}
-	if res == nil {
-		res = resource.Empty()
 	}
 
 	for idx, customizer := range cfg.Customizers {
@@ -265,9 +255,6 @@ func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) 
 		res, err = customizer.Customize(ctx, res)
 		if err != nil {
 			return nil, fmt.Errorf("resource customizer %d: %w", idx, err)
-		}
-		if res == nil {
-			res = resource.Empty()
 		}
 	}
 

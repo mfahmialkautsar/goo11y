@@ -1,41 +1,37 @@
 package profiler
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	"github.com/mfahmialkautsar/goo11y/logger"
+)
 
 var globalController atomic.Value
 
-func init() {
-	Use(nil)
-}
-
 // Init configures the profiler controller and exposes it globally.
-func Init(cfg Config) (*Controller, error) {
-	controller, err := Setup(cfg)
+func Init(cfg Config, log *logger.Logger) error {
+	controller, err := Setup(cfg, log)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	Use(controller)
-	return controller, nil
+	return nil
 }
 
 // Use replaces the global profiler controller with the provided instance.
 // Passing nil installs an inert controller.
 func Use(controller *Controller) {
-	if controller == nil {
-		controller = &Controller{}
-	}
 	globalController.Store(controller)
 }
 
 // Global returns the current global profiler controller.
 func Global() *Controller {
 	value := globalController.Load()
-	if controller, ok := value.(*Controller); ok && controller != nil {
-		return controller
+	controller, ok := value.(*Controller)
+	if !ok || controller == nil {
+		panic("profiler: global controller not initialized - call profiler.Init() or profiler.Use() first")
 	}
-	empty := &Controller{}
-	globalController.Store(empty)
-	return empty
+	return controller
 }
 
 // Stop terminates the global profiler controller if active.

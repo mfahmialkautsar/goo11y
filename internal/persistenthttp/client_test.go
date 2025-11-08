@@ -136,10 +136,13 @@ func TestClientRetriesUntilSuccess(t *testing.T) {
 }
 
 func TestTransportWrapperNilRequest(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil request")
+		}
+	}()
 	wrapper := &transportWrapper{}
-	if _, err := wrapper.RoundTrip(nil); err == nil || !strings.Contains(err.Error(), "nil request") {
-		t.Fatalf("expected nil request error, got %v", err)
-	}
+	_, _ = wrapper.RoundTrip(nil)
 }
 
 type errReadCloser struct {

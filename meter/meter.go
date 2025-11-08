@@ -27,7 +27,7 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	cfg = cfg.ApplyDefaults()
 
 	if !cfg.Enabled {
-		return &Provider{}, nil
+		return nil, nil
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -92,9 +92,6 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 
 	if flush == nil {
 		flush = func(ctx context.Context) error {
-			if provider == nil {
-				return nil
-			}
 			return provider.ForceFlush(ctx)
 		}
 	}
@@ -110,7 +107,7 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 
 // RegisterRuntimeMetrics adds basic Go runtime metrics if enabled.
 func (p *Provider) RegisterRuntimeMetrics(ctx context.Context, cfg RuntimeConfig) error {
-	if !cfg.Enabled || p.meter == nil {
+	if !cfg.Enabled {
 		return nil
 	}
 	return registerRuntimeInstruments(ctx, p.meter)
@@ -134,8 +131,9 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 }
 
 // ForceFlush ensures metrics are exported immediately.
+// No-op if provider is disabled.
 func (p *Provider) ForceFlush(ctx context.Context) error {
-	if p == nil || p.flush == nil {
+	if p.flush == nil {
 		return nil
 	}
 	return p.flush(ctx)

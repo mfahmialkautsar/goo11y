@@ -33,10 +33,6 @@ type otlpWriter struct {
 }
 
 func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment string) (*otlpWriter, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	exporter, spool, err := configureExporter(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -66,10 +62,6 @@ func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment
 }
 
 func (w *otlpWriter) Write(p []byte) (int, error) {
-	if w == nil || w.logger == nil {
-		return len(p), nil
-	}
-
 	record, spanCtx := buildRecord(p)
 
 	emitCtx := context.Background()

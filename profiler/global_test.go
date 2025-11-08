@@ -3,33 +3,24 @@ package profiler
 import "testing"
 
 func TestInitDisabledProfilerGlobal(t *testing.T) {
-	Use(nil)
-	t.Cleanup(func() { Use(nil) })
-
-	controller, err := Init(Config{})
-	if err != nil {
+	if err := Init(Config{}, nil); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	if controller == nil {
-		t.Fatal("expected controller instance")
-	}
-
-	if Global() != controller {
-		t.Fatal("global controller mismatch")
-	}
-
-	if err := Stop(); err != nil {
-		t.Fatalf("stop global profiler: %v", err)
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when accessing global profiler controller after Init disabled")
+		}
+	}()
+	_ = Global()
 }
 
 func TestUseNilResetsGlobalProfiler(t *testing.T) {
 	Use(nil)
-	if Global() == nil {
-		t.Fatal("expected placeholder controller")
-	}
 
-	if err := Stop(); err != nil {
-		t.Fatalf("stop noop profiler: %v", err)
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when accessing global profiler controller after Use(nil)")
+		}
+	}()
+	_ = Global()
 }

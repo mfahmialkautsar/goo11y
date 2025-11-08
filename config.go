@@ -46,9 +46,6 @@ type ResourceCustomizerFunc func(context.Context, *resource.Resource) (*resource
 
 // Customize executes the wrapped function.
 func (f ResourceCustomizerFunc) Customize(ctx context.Context, res *resource.Resource) (*resource.Resource, error) {
-	if f == nil {
-		return res, nil
-	}
 	return f(ctx, res)
 }
 

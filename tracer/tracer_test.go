@@ -17,8 +17,13 @@ func TestSetupDisabledTracer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup disabled tracer: %v", err)
 	}
+
 	if provider == nil {
-		t.Fatal("expected provider instance")
+		sc := provider.SpanContext(context.Background())
+		if sc.IsValid() {
+			t.Fatalf("expected zero span context for empty context, got %v", sc)
+		}
+		return
 	}
 
 	if sc := provider.SpanContext(context.Background()); sc.IsValid() {

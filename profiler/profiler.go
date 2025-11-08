@@ -16,11 +16,11 @@ type Controller struct {
 }
 
 // Setup initializes a pyroscope profiler and starts profiling if enabled.
-func Setup(cfg Config) (*Controller, error) {
+func Setup(cfg Config, log *logger.Logger) (*Controller, error) {
 	cfg = cfg.ApplyDefaults()
 
 	if !cfg.Enabled {
-		return &Controller{}, nil
+		return nil, nil
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -37,7 +37,7 @@ func Setup(cfg Config) (*Controller, error) {
 	profilerCfg := pyroscope.Config{
 		ApplicationName: cfg.ServiceName,
 		ServerAddress:   cfg.ServerURL,
-		Logger:          newPyroscopeTelemetryLogger(),
+		Logger:          pyroscope.StandardLogger,
 		Tags:            cfg.Tags,
 		TenantID:        cfg.TenantID,
 		ProfileTypes: []pyroscope.ProfileType{
@@ -53,6 +53,10 @@ func Setup(cfg Config) (*Controller, error) {
 			pyroscope.ProfileBlockDuration,
 		},
 		HTTPHeaders: headers,
+	}
+
+	if log != nil {
+		profilerCfg.Logger = newPyroscopeTelemetryLogger(log)
 	}
 
 	if hasBasic {
@@ -103,31 +107,18 @@ type pyroscopeTelemetryLogger struct {
 	log *logger.Logger
 }
 
-func newPyroscopeTelemetryLogger() pyroscopeTelemetryLogger {
-	log := func() *logger.Logger {
-		defer func() { recover() }()
-		return logger.Global()
-	}()
+func newPyroscopeTelemetryLogger(log *logger.Logger) pyroscopeTelemetryLogger {
 	return pyroscopeTelemetryLogger{log: log}
 }
 
 func (l pyroscopeTelemetryLogger) Infof(format string, args ...interface{}) {
-	if l.log == nil {
-		return
-	}
 	l.log.Info().Msg(fmt.Sprintf(format, args...))
 }
 
 func (l pyroscopeTelemetryLogger) Debugf(format string, args ...interface{}) {
-	if l.log == nil {
-		return
-	}
 	l.log.Debug().Msg(fmt.Sprintf(format, args...))
 }
 
 func (l pyroscopeTelemetryLogger) Errorf(format string, args ...interface{}) {
-	if l.log == nil {
-		return
-	}
 	l.log.Error().Msg(fmt.Sprintf(format, args...))
 }

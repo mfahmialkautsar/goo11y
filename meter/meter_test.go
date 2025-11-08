@@ -15,17 +15,17 @@ func TestSetupDisabledMeter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup disabled meter: %v", err)
 	}
-	if provider == nil {
-		t.Fatal("expected provider instance")
+
+	if provider != nil {
+		t.Fatalf("expected nil provider when disabled, got %#v", provider)
 	}
 
-	if err := provider.RegisterRuntimeMetrics(ctx, RuntimeConfig{Enabled: true}); err != nil {
-		t.Fatalf("register runtime metrics on disabled meter: %v", err)
-	}
-
-	if err := provider.Shutdown(ctx); err != nil {
-		t.Fatalf("shutdown disabled meter: %v", err)
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when invoking method on nil provider")
+		}
+	}()
+	_ = provider.RegisterRuntimeMetrics(ctx, RuntimeConfig{Enabled: true})
 }
 
 func TestSetupRequiresEndpointWhenEnabled(t *testing.T) {

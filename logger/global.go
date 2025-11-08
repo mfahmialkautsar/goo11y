@@ -10,13 +10,13 @@ import (
 var globalLogger atomic.Pointer[Logger]
 
 // Init constructs a logger using New and makes it globally available via package-level helpers.
-func Init(ctx context.Context, cfg Config) (*Logger, error) {
+func Init(ctx context.Context, cfg Config) error {
 	log, err := New(ctx, cfg)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	Use(log)
-	return log, nil
+	return nil
 }
 
 // Use replaces the global logger instance with the provided implementation.

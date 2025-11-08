@@ -18,8 +18,6 @@ func TestGlobalMimirMetricsIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	Use(nil)
-	t.Cleanup(func() { Use(nil) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -52,11 +50,11 @@ func TestGlobalMimirMetricsIntegration(t *testing.T) {
 		QueueDir:       queueDir,
 	}
 
-	provider, err := Init(ctx, cfg, res)
-	if err != nil {
+	if err := Init(ctx, cfg, res); err != nil {
 		t.Fatalf("meter setup: %v", err)
 	}
-	if provider == nil || provider.provider == nil {
+	provider := Global()
+	if provider == nil {
 		t.Fatal("expected global provider")
 	}
 	shutdownComplete := false

@@ -22,10 +22,10 @@ func TestInitSetsGlobalLogger(t *testing.T) {
 		Writers:     []io.Writer{&buf},
 	}
 
-	log, err := Init(context.Background(), cfg)
-	if err != nil {
+	if err := Init(context.Background(), cfg); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	log := Global()
 	if log == nil {
 		t.Fatal("expected init logger")
 	}

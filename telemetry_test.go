@@ -83,8 +83,9 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 	}
 }
 
-func TestTelemetryEmitWarnSkipsNilLogger(t *testing.T) {
+func TestTelemetryEmitWarnUsesStdLogWhenLoggerNil(t *testing.T) {
 	tele := &Telemetry{}
+	// Should use Go's standard logger as fallback, not panic or skip
 	tele.emitWarn(context.Background(), "msg", errors.New("noop"))
 }
 

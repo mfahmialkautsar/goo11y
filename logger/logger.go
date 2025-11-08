@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"runtime"
 	"strings"
@@ -180,17 +181,21 @@ func (spanHook) Run(event *zerolog.Event, level zerolog.Level, msg string) {
 	}
 }
 
-func exportFailureLogger(log *Logger) func(component, transport string, err error) {
+func exportFailureLogger(logger *Logger) func(component, transport string, err error) {
 	return func(component, transport string, err error) {
-		if err == nil || log == nil {
+		if err == nil {
 			return
 		}
-		logger := *log.Logger
-		exclusions := failureExclusions(component, transport)
-		if log.outputs != nil && len(exclusions) > 0 {
-			logger = logger.Output(log.outputs.writerExcept(exclusions...))
+		if logger == nil {
+			log.Printf("telemetry export failure (component=%s transport=%s): %v", component, transport, err)
+			return
 		}
-		event := logger.Error()
+		clonedLogger := *logger
+		exclusions := failureExclusions(component, transport)
+		if clonedLogger.outputs != nil && len(exclusions) > 0 {
+			*clonedLogger.Logger = logger.Output(logger.outputs.writerExcept(exclusions...))
+		}
+		event := clonedLogger.Error()
 		if component != "" {
 			event = event.Str("component", component)
 		}

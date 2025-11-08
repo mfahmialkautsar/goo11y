@@ -44,10 +44,6 @@ type transportWrapper struct {
 }
 
 func (t *transportWrapper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req == nil {
-		return nil, fmt.Errorf("persistenthttp: nil request")
-	}
-
 	body, err := readAll(req.Body)
 	if err != nil {
 		return nil, err

@@ -89,15 +89,14 @@ func TestConfigValidateRequiresServiceName(t *testing.T) {
 }
 
 func TestResourceCustomizerFuncNil(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when calling nil function")
+		}
+	}()
 	res := resource.Empty()
 	var fn ResourceCustomizerFunc
-	out, err := fn.Customize(context.Background(), res)
-	if err != nil {
-		t.Fatalf("Customize returned error: %v", err)
-	}
-	if out != res {
-		t.Fatalf("expected original resource when function nil")
-	}
+	_, _ = fn.Customize(context.Background(), res)
 }
 
 func TestResourceCustomizerFuncInvokes(t *testing.T) {

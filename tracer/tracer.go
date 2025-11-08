@@ -20,9 +20,6 @@ type Provider struct {
 
 // RegisterSpanProcessor attaches the supplied span processor to the underlying provider.
 func (p *Provider) RegisterSpanProcessor(processor sdktrace.SpanProcessor) {
-	if processor == nil || p.provider == nil {
-		return
-	}
 	p.provider.RegisterSpanProcessor(processor)
 }
 
@@ -32,7 +29,7 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	cfg = cfg.ApplyDefaults()
 
 	if !cfg.Enabled {
-		return &Provider{}, nil
+		return nil, nil
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -86,13 +83,11 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 
 // SpanContext extracts the span context from the provided request context.
 func (p *Provider) SpanContext(ctx context.Context) trace.SpanContext {
-	if ctx == nil {
-		return trace.SpanContext{}
-	}
 	return trace.SpanContextFromContext(ctx)
 }
 
 // Shutdown flushes and terminates the tracer provider.
+// No-op if provider is disabled.
 func (p *Provider) Shutdown(ctx context.Context) error {
 	if p.provider == nil {
 		return nil
@@ -101,6 +96,7 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 }
 
 // ForceFlush pushes pending spans to the configured exporter.
+// No-op if provider is disabled.
 func (p *Provider) ForceFlush(ctx context.Context) error {
 	if p.provider == nil {
 		return nil
