@@ -85,7 +85,6 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 
 func TestTelemetryEmitWarnUsesStdLogWhenLoggerNil(t *testing.T) {
 	tele := &Telemetry{}
-	// Should use Go's standard logger as fallback, not panic or skip
 	tele.emitWarn(context.Background(), "msg", errors.New("noop"))
 }
 
@@ -111,14 +110,6 @@ func TestTelemetryEmitWarnSkipsNilError(t *testing.T) {
 	if buf.Len() != 0 {
 		t.Fatalf("expected no log output for nil error, got %s", buf.String())
 	}
-}
-
-type stubDetector struct {
-	attr attribute.KeyValue
-}
-
-func (d stubDetector) Detect(context.Context) (*sdkresource.Resource, error) {
-	return sdkresource.NewSchemaless(d.attr), nil
 }
 
 func TestBuildResourceComposes(t *testing.T) {
@@ -171,14 +162,6 @@ func TestBuildResourceComposes(t *testing.T) {
 			t.Fatalf("attribute %s mismatch: %v", key, got)
 		}
 	}
-}
-
-func attributeStringMap(attrs []attribute.KeyValue) map[string]string {
-	result := make(map[string]string, len(attrs))
-	for _, attr := range attrs {
-		result[string(attr.Key)] = attr.Value.AsString()
-	}
-	return result
 }
 
 func TestBuildResourceOverrideError(t *testing.T) {

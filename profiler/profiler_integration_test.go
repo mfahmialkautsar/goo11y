@@ -3,14 +3,11 @@ package profiler
 import (
 	"context"
 	"fmt"
-	"math"
 	"testing"
 	"time"
 
 	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
-
-var cpuSink float64
 
 func TestPyroscopeProfilingIntegration(t *testing.T) {
 	if testing.Short() {
@@ -65,15 +62,4 @@ func TestPyroscopeProfilingIntegration(t *testing.T) {
 	if err := testintegration.WaitForPyroscopeProfile(ctx, pyroscopeBase, tenantID, serviceName, labelValue); err != nil {
 		t.Fatalf("pyroscope did not report service %s: %v", serviceName, err)
 	}
-}
-
-func burnCPU(duration time.Duration) {
-	deadline := time.Now().Add(duration)
-	sum := cpuSink
-	for time.Now().Before(deadline) {
-		for i := 1; i < 5000; i++ {
-			sum += math.Sqrt(float64(i))
-		}
-	}
-	cpuSink = sum
 }

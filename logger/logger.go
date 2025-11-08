@@ -320,7 +320,7 @@ func frameLocation(frame runtime.Frame) string {
 	return fmt.Sprintf("%s:%d", frame.File, frame.Line)
 }
 
-func marshalStackTrace(err error) interface{} {
+func marshalStackTrace(err error) any {
 	if err == nil {
 		return nil
 	}
