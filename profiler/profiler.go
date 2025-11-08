@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/grafana/pyroscope-go"
+	"github.com/mfahmialkautsar/goo11y/logger"
 )
 
 // Controller manages the lifecycle of the Pyroscope profiler.
@@ -36,7 +37,7 @@ func Setup(cfg Config) (*Controller, error) {
 	profilerCfg := pyroscope.Config{
 		ApplicationName: cfg.ServiceName,
 		ServerAddress:   cfg.ServerURL,
-		Logger:          nil,
+		Logger:          newPyroscopeTelemetryLogger(),
 		Tags:            cfg.Tags,
 		TenantID:        cfg.TenantID,
 		ProfileTypes: []pyroscope.ProfileType{
@@ -96,4 +97,24 @@ func (c *Controller) Flush(wait bool) {
 		return
 	}
 	c.profiler.Flush(wait)
+}
+
+type pyroscopeTelemetryLogger struct {
+	log logger.Logger
+}
+
+func newPyroscopeTelemetryLogger() pyroscopeTelemetryLogger {
+	return pyroscopeTelemetryLogger{log: logger.With("component", "profiler")}
+}
+
+func (l pyroscopeTelemetryLogger) Infof(format string, args ...interface{}) {
+	l.log.Info(fmt.Sprintf(format, args...))
+}
+
+func (l pyroscopeTelemetryLogger) Debugf(format string, args ...interface{}) {
+	l.log.Debug(fmt.Sprintf(format, args...))
+}
+
+func (l pyroscopeTelemetryLogger) Errorf(format string, args ...interface{}) {
+	l.log.Error(nil, fmt.Sprintf(format, args...))
 }

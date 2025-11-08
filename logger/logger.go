@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/pkgerrors"
 )
@@ -50,6 +51,7 @@ func (f TraceProviderFunc) Current(ctx context.Context) (TraceContext, bool) {
 
 type loggerCore struct {
 	base          zerolog.Logger
+	outputs       *writerFanout
 	traceProvider atomic.Value // TraceProvider
 }
 
@@ -82,17 +84,19 @@ func New(ctx context.Context, cfg Config) (Logger, error) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 
-	writers := make([]io.Writer, 0, len(cfg.Writers)+3)
-	writers = append(writers, cfg.Writers...)
+	fanout := newWriterFanout()
+	for idx, w := range cfg.Writers {
+		fanout.add(fmt.Sprintf("custom_%d", idx), w)
+	}
 	if cfg.File.Enabled {
 		fileWriter, err := newDailyFileWriter(cfg.File)
 		if err != nil {
 			return nil, fmt.Errorf("setup file writer: %w", err)
 		}
-		writers = append(writers, fileWriter)
+		fanout.add("file", fileWriter)
 	}
 	if cfg.Console {
-		writers = append(writers, zerolog.ConsoleWriter{
+		fanout.add("console", zerolog.ConsoleWriter{
 			Out:        os.Stdout,
 			TimeFormat: defaultConsoleTimeFormat,
 		})
@@ -102,13 +106,17 @@ func New(ctx context.Context, cfg Config) (Logger, error) {
 		if err != nil {
 			return nil, fmt.Errorf("setup otlp writer: %w", err)
 		}
-		writers = append(writers, otlpWriter)
+		transport := strings.ToLower(strings.TrimSpace(cfg.OTLP.Exporter))
+		if transport == "" {
+			transport = "http"
+		}
+		fanout.add(transport, otlpWriter)
 	}
-	if len(writers) == 0 {
-		writers = append(writers, os.Stdout)
+	if fanout.len() == 0 {
+		fanout.add("stdout", os.Stdout)
 	}
 
-	multiWriter := io.MultiWriter(writers...)
+	multiWriter := fanout.writer()
 
 	base := zerolog.New(multiWriter).
 		With().
@@ -122,8 +130,10 @@ func New(ctx context.Context, cfg Config) (Logger, error) {
 	}
 	base = base.Level(level)
 
-	core := &loggerCore{base: base}
+	core := &loggerCore{base: base, outputs: fanout}
 	core.traceProvider.Store(noopTraceProvider)
+
+	otlputil.SetExportFailureHandler(exportFailureLogger(core))
 
 	return &zerologLogger{core: core}, nil
 }
@@ -237,4 +247,129 @@ func (l *zerologLogger) clone() *zerologLogger {
 		clone.static = append([]any(nil), l.static...)
 	}
 	return clone
+}
+
+func exportFailureLogger(core *loggerCore) func(component, transport string, err error) {
+	return func(component, transport string, err error) {
+		if err == nil || core == nil {
+			return
+		}
+		logger := core.base
+		exclusions := failureExclusions(component, transport)
+		if core.outputs != nil && len(exclusions) > 0 {
+			logger = logger.Output(core.outputs.writerExcept(exclusions...))
+		}
+		event := logger.Error()
+		if component != "" {
+			event = event.Str("component", component)
+		}
+		if transport != "" {
+			event = event.Str("transport", transport)
+		}
+		event.Err(err).Msg("telemetry export failure")
+	}
+}
+
+func failureExclusions(component, transport string) []string {
+	transport = strings.ToLower(strings.TrimSpace(transport))
+	exclusions := make([]string, 0, 2)
+	switch transport {
+	case "http", "grpc", "file", "stdout", "stderr", "console":
+		exclusions = append(exclusions, transport)
+	}
+	if strings.EqualFold(component, "logger") && transport == "" {
+		exclusions = append(exclusions, "http", "grpc", "file", "stdout", "stderr", "console")
+	}
+	return exclusions
+}
+
+type namedWriter struct {
+	name   string
+	writer io.Writer
+}
+
+type writerFanout struct {
+	writers []namedWriter
+}
+
+func newWriterFanout() *writerFanout {
+	return &writerFanout{writers: make([]namedWriter, 0)}
+}
+
+func (f *writerFanout) add(name string, writer io.Writer) {
+	if writer == nil {
+		return
+	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		name = "custom"
+	}
+	f.writers = append(f.writers, namedWriter{name: name, writer: writer})
+}
+
+func (f *writerFanout) len() int {
+	return len(f.writers)
+}
+
+func (f *writerFanout) writer() io.Writer {
+	if len(f.writers) == 0 {
+		return nilWriter{}
+	}
+	return fanoutWriter{writers: append([]namedWriter(nil), f.writers...)}
+}
+
+func (f *writerFanout) writerExcept(excluded ...string) io.Writer {
+	if len(f.writers) == 0 {
+		return os.Stderr
+	}
+	if len(excluded) == 0 {
+		return fanoutWriter{writers: append([]namedWriter(nil), f.writers...)}
+	}
+	exclude := make(map[string]struct{}, len(excluded))
+	for _, name := range excluded {
+		exclude[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+	filtered := make([]namedWriter, 0, len(f.writers))
+	for _, w := range f.writers {
+		if _, skip := exclude[w.name]; skip {
+			continue
+		}
+		filtered = append(filtered, w)
+	}
+	if len(filtered) == 0 {
+		return os.Stderr
+	}
+	return fanoutWriter{writers: filtered}
+}
+
+type fanoutWriter struct {
+	writers []namedWriter
+}
+
+func (w fanoutWriter) Write(p []byte) (int, error) {
+	if len(w.writers) == 0 {
+		return len(p), nil
+	}
+	var firstErr error
+	for _, writer := range w.writers {
+		if writer.writer == nil {
+			continue
+		}
+		if _, err := writer.writer.Write(p); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			otlputil.LogExportFailure("logger", writer.name, err)
+		}
+	}
+	if firstErr != nil {
+		return len(p), firstErr
+	}
+	return len(p), nil
+}
+
+type nilWriter struct{}
+
+func (nilWriter) Write(p []byte) (int, error) {
+	return len(p), nil
 }

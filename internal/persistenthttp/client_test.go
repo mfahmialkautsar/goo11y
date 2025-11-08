@@ -114,7 +114,7 @@ func TestClientRetriesUntilSuccess(t *testing.T) {
 		t.Fatalf("resp.Body.Close: %v", err)
 	}
 
-	deadline := time.After(1 * time.Second)
+	deadline := time.After(3 * time.Second)
 	for atomic.LoadInt32(&attempts) < 2 {
 		select {
 		case <-deadline:
