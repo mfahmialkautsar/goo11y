@@ -28,7 +28,7 @@ type Config struct {
 
 // OTLPConfig captures OTLP export settings for log delivery.
 // Endpoint accepts a base URL (host[:port] with optional path). When a scheme is provided,
-// TLS is inferred automatically (http/grpc => insecure, https/grpcs => secure). Without a
+// TLS is inferred automatically (http => insecure, https => secure). Without a
 // scheme, the Insecure flag determines whether TLS is disabled.
 type OTLPConfig struct {
 	Enabled     bool

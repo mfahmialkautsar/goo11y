@@ -16,8 +16,8 @@ type Endpoint struct {
 // ParseEndpoint normalizes a user-supplied endpoint, preserving any base path and inferring TLS mode.
 //
 // Behavior:
-//   - Schemes `http` and `grpc` mark the endpoint as insecure.
-//   - Schemes `https` and `grpcs` mark the endpoint as secure (Insecure=false).
+//   - Schemes `http` and mark the endpoint as insecure.
+//   - Schemes `https` mark the endpoint as secure (Insecure=false).
 //   - If no scheme is provided, fallbackInsecure is used to determine TLS and the string is parsed manually.
 //   - Any query or fragment components are rejected.
 //
@@ -106,7 +106,7 @@ func schemeIsInsecure(scheme string, fallback bool) bool {
 	switch strings.ToLower(scheme) {
 	case "http", "grpc":
 		return true
-	case "https", "grpcs":
+	case "https":
 		return false
 	default:
 		return fallback

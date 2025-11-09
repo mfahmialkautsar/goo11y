@@ -11,7 +11,7 @@ import (
 
 // Config governs tracer provider setup.
 // Endpoint accepts a base URL (host[:port] with optional path). When a scheme is supplied it
-// dictates TLS (http/grpc => insecure, https/grpcs => secure); otherwise the Insecure flag is used.
+// dictates TLS (http => insecure, https => secure); otherwise the Insecure flag is used.
 type Config struct {
 	Enabled       bool
 	Endpoint      string `validate:"required_if=Enabled true"`

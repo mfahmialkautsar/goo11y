@@ -51,16 +51,6 @@ func TestParseEndpoint(t *testing.T) {
 			},
 		},
 		{
-			name:             "grpc secure scheme",
-			in:               "grpcs://collector:4317",
-			fallbackInsecure: true,
-			want: Endpoint{
-				Host:     "collector:4317",
-				Path:     "",
-				Insecure: false,
-			},
-		},
-		{
 			name:             "empty",
 			in:               " ",
 			fallbackInsecure: true,

@@ -47,6 +47,12 @@ jobs:
       - name: Test
         run: go test -coverprofile=coverage.out ./...
 
+      - name: Filter coverage
+        run: |
+          grep -v "_test_helpers_test.go" coverage.out > coverage_filtered.out || true
+          grep -v "internal/testutil/" coverage_filtered.out > coverage.out || true
+          rm -f coverage_filtered.out
+
       - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:

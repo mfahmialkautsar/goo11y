@@ -38,6 +38,9 @@ test-all: test
 
 coverage: clean-testcache
 	go test -race -count=1 -v -cover -coverprofile=coverage.out ./...
+	@grep -v "_test_helpers_test.go" coverage.out > coverage_filtered.out || true
+	@grep -v "internal/testutil/" coverage_filtered.out > coverage.out || true
+	@rm -f coverage_filtered.out
 
 coverage-report: coverage
 	go tool cover -func=coverage.out | tail -n1
