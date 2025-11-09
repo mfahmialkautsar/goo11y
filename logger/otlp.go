@@ -33,11 +33,11 @@ type otlpWriter struct {
 }
 
 func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment string) (*otlpWriter, error) {
-	exporter, spool, err := configureExporter(ctx, cfg)
+	exporter, spool, httpClient, err := configureExporter(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	exporter = wrapLogExporter(exporter, "logger", cfg.Exporter, spool)
+	exporter = wrapLogExporter(exporter, "logger", cfg.Exporter, spool, httpClient)
 
 	res, err := buildResource(ctx, serviceName, environment)
 	if err != nil {
@@ -73,15 +73,15 @@ func (w *otlpWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, *persistentgrpc.Manager, error) {
+func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, *persistentgrpc.Manager, *persistenthttp.Client, error) {
 	endpoint := strings.TrimSpace(cfg.Endpoint)
 	if endpoint == "" {
-		return nil, nil, fmt.Errorf("otlp: endpoint is required")
+		return nil, nil, nil, fmt.Errorf("otlp: endpoint is required")
 	}
 
 	parsed, err := otlputil.ParseEndpoint(endpoint, cfg.Insecure)
 	if err != nil {
-		return nil, nil, fmt.Errorf("otlp: %w", err)
+		return nil, nil, nil, fmt.Errorf("otlp: %w", err)
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.Exporter))
@@ -91,41 +91,46 @@ func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, *pers
 
 	switch mode {
 	case constant.ExporterHTTP:
-		exporter, err := setupHTTPExporter(ctx, cfg, parsed)
+		exporter, httpClient, err := setupHTTPExporter(ctx, cfg, parsed)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return exporter, nil, nil
+		return exporter, nil, httpClient, nil
 	case constant.ExporterGRPC:
 		exporter, spool, err := setupGRPCExporter(ctx, cfg, parsed)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return exporter, spool, nil
+		return exporter, spool, nil, nil
 	default:
-		return nil, nil, fmt.Errorf("otlp: unsupported exporter %q", cfg.Exporter)
+		return nil, nil, nil, fmt.Errorf("otlp: unsupported exporter %q", cfg.Exporter)
 	}
 }
 
 type logExporterWithLogging struct {
 	log.Exporter
-	component string
-	transport string
-	spool     *persistentgrpc.Manager
+	component  string
+	transport  string
+	spool      *persistentgrpc.Manager
+	httpClient *persistenthttp.Client
 }
 
-func wrapLogExporter(exp log.Exporter, component, transport string, spool *persistentgrpc.Manager) log.Exporter {
+func wrapLogExporter(exp log.Exporter, component, transport string, spool *persistentgrpc.Manager, httpClient *persistenthttp.Client) log.Exporter {
 	if exp == nil {
 		if spool != nil {
 			_ = spool.Stop(context.Background())
 		}
+		if httpClient != nil {
+			_ = httpClient.Close()
+		}
 		return exp
 	}
 	return &logExporterWithLogging{
-		Exporter:  exp,
-		component: component,
-		transport: transport,
-		spool:     spool,
+		Exporter:   exp,
+		component:  component,
+		transport:  transport,
+		spool:      spool,
+		httpClient: httpClient,
 	}
 }
 
@@ -147,6 +152,11 @@ func (l logExporterWithLogging) Shutdown(ctx context.Context) error {
 			err = stopErr
 		}
 	}
+	if l.httpClient != nil {
+		if closeErr := l.httpClient.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}
 	return err
 }
 
@@ -158,7 +168,7 @@ func (l logExporterWithLogging) ForceFlush(ctx context.Context) error {
 	return err
 }
 
-func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, error) {
+func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, *persistenthttp.Client, error) {
 	options := []otlploghttp.Option{
 		otlploghttp.WithEndpoint(strings.TrimRight(endpoint.Host, "/")),
 		otlploghttp.WithURLPath(endpoint.PathWithSuffix("/v1/logs")),
@@ -173,21 +183,26 @@ func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.En
 	if headers := cfg.headerMap(); len(headers) > 0 {
 		options = append(options, otlploghttp.WithHeaders(headers))
 	}
+	var spoolClient *persistenthttp.Client
 	if cfg.UseSpool {
-		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.Timeout)
+		client, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.Timeout, "logger")
 		if err != nil {
-			return nil, fmt.Errorf("otlp http exporter: %w", err)
+			return nil, nil, fmt.Errorf("create log client: %w", err)
 		}
-		options = append(options, otlploghttp.WithHTTPClient(client))
+		spoolClient = client
+		options = append(options, otlploghttp.WithHTTPClient(client.Client))
 	}
 
 	options = append(options, otlploghttp.WithRetry(otlploghttp.RetryConfig{Enabled: true}))
 
 	exporter, err := otlploghttp.New(ctx, options...)
 	if err != nil {
-		return nil, fmt.Errorf("otlp http exporter: %w", err)
+		if spoolClient != nil {
+			_ = spoolClient.Close()
+		}
+		return nil, nil, fmt.Errorf("otlp http exporter: %w", err)
 	}
-	return exporter, nil
+	return exporter, spoolClient, nil
 }
 
 func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, *persistentgrpc.Manager, error) {

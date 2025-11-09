@@ -115,7 +115,7 @@ func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
 }
 
 func TestConfigureExporterRejectsUnknown(t *testing.T) {
-	_, _, err := configureExporter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Exporter: "udp"})
+	_, _, _, err := configureExporter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Exporter: "udp"})
 	if err == nil {
 		t.Fatal("expected error for unsupported exporter")
 	}
