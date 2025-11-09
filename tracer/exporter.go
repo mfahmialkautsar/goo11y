@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdktrace.SpanExporter, error) {
+func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdktrace.SpanExporter, *persistenthttp.Client, error) {
 	opts := []otlptracehttp.Option{
 		otlptracehttp.WithEndpoint(endpoint.Host),
 		otlptracehttp.WithURLPath(endpoint.PathWithSuffix("/v1/traces")),
@@ -31,20 +31,25 @@ func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 		opts = append(opts, otlptracehttp.WithHeaders(headers))
 	}
 
+	var spoolClient *persistenthttp.Client
 	if cfg.UseSpool {
-		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportTimeout)
+		client, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.ExportTimeout, "tracer")
 		if err != nil {
-			return nil, fmt.Errorf("create trace client: %w", err)
+			return nil, nil, fmt.Errorf("create trace client: %w", err)
 		}
-		opts = append(opts, otlptracehttp.WithHTTPClient(client))
+		spoolClient = client
+		opts = append(opts, otlptracehttp.WithHTTPClient(client.Client))
 	}
 	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true}))
 
 	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
-		return nil, err
+		if spoolClient != nil {
+			_ = spoolClient.Close()
+		}
+		return nil, nil, err
 	}
-	return wrapSpanExporter(exporter, "tracer", cfg.Exporter, nil), nil
+	return exporter, spoolClient, nil
 }
 
 func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdktrace.SpanExporter, error) {
@@ -93,20 +98,24 @@ func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 		}
 		return nil, err
 	}
-	return wrapSpanExporter(exporter, "tracer", cfg.Exporter, spoolManager), nil
+	return wrapSpanExporter(exporter, "tracer", cfg.Exporter, spoolManager, nil), nil
 }
 
 type spanExporterWithLogging struct {
 	sdktrace.SpanExporter
-	component string
-	transport string
-	spool     *persistentgrpc.Manager
+	component  string
+	transport  string
+	spool      *persistentgrpc.Manager
+	httpClient *persistenthttp.Client
 }
 
-func wrapSpanExporter(exp sdktrace.SpanExporter, component, transport string, spool *persistentgrpc.Manager) sdktrace.SpanExporter {
+func wrapSpanExporter(exp sdktrace.SpanExporter, component, transport string, spool *persistentgrpc.Manager, httpClient *persistenthttp.Client) sdktrace.SpanExporter {
 	if exp == nil {
 		if spool != nil {
 			_ = spool.Stop(context.Background())
+		}
+		if httpClient != nil {
+			_ = httpClient.Close()
 		}
 		return exp
 	}
@@ -115,6 +124,7 @@ func wrapSpanExporter(exp sdktrace.SpanExporter, component, transport string, sp
 		component:    component,
 		transport:    transport,
 		spool:        spool,
+		httpClient:   httpClient,
 	}
 }
 
@@ -134,6 +144,11 @@ func (s *spanExporterWithLogging) Shutdown(ctx context.Context) error {
 	if s.spool != nil {
 		if stopErr := s.spool.Stop(ctx); stopErr != nil && err == nil {
 			err = stopErr
+		}
+	}
+	if s.httpClient != nil {
+		if closeErr := s.httpClient.Close(); closeErr != nil && err == nil {
+			err = closeErr
 		}
 	}
 	return err

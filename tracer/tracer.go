@@ -6,6 +6,8 @@ import (
 
 	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
+	"github.com/mfahmialkautsar/goo11y/internal/persistentgrpc"
+	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -42,12 +44,19 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	}
 
 	var exporter sdktrace.SpanExporter
+	var httpClient *persistenthttp.Client
+	var grpcManager *persistentgrpc.Manager
 
 	switch cfg.Exporter {
 	case constant.ExporterGRPC:
 		exporter, err = setupGRPCExporter(ctx, cfg, endpoint)
+		if wrapper, ok := exporter.(*spanExporterWithLogging); ok {
+			grpcManager = wrapper.spool
+		}
 	case constant.ExporterHTTP:
-		exporter, err = setupHTTPExporter(ctx, cfg, endpoint)
+		var httpSpool *persistenthttp.Client
+		exporter, httpSpool, err = setupHTTPExporter(ctx, cfg, endpoint)
+		httpClient = httpSpool
 	default:
 		return nil, fmt.Errorf("tracer: unsupported exporter %s", cfg.Exporter)
 	}
@@ -55,6 +64,8 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 	if err != nil {
 		return nil, err
 	}
+
+	exporter = wrapSpanExporter(exporter, "tracer", cfg.Exporter, grpcManager, httpClient)
 
 	sam := samplerFromRatio(cfg.SampleRatio)
 	options := []sdktrace.TracerProviderOption{
