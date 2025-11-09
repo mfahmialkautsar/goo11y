@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,13 +19,16 @@ type dailyFileWriter struct {
 	directory string
 	queue     chan []byte
 	now       func() time.Time
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 
 	mu          sync.Mutex
 	currentDate string
 	file        *os.File
 }
 
-func newDailyFileWriter(cfg FileConfig) (*dailyFileWriter, error) {
+func newDailyFileWriter(ctx context.Context, cfg FileConfig) (*dailyFileWriter, error) {
 	if cfg.Directory == "" {
 		return nil, fmt.Errorf("missing file log directory")
 	}
@@ -34,12 +38,17 @@ func newDailyFileWriter(cfg FileConfig) (*dailyFileWriter, error) {
 		buffer = defaultFileWriterBuffer
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	w := &dailyFileWriter{
 		directory: cfg.Directory,
 		queue:     make(chan []byte, buffer),
 		now:       time.Now,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 
+	w.wg.Add(1)
 	go w.run()
 
 	return w, nil
@@ -53,17 +62,44 @@ func (w *dailyFileWriter) Write(p []byte) (int, error) {
 	copyBuf := make([]byte, len(p))
 	copy(copyBuf, p)
 
-	w.queue <- copyBuf
+	select {
+	case w.queue <- copyBuf:
+		return len(p), nil
+	case <-w.ctx.Done():
+		return 0, fmt.Errorf("file writer closed")
+	}
+}
 
-	return len(p), nil
+func (w *dailyFileWriter) Close() error {
+	w.cancel()
+	close(w.queue)
+	w.wg.Wait()
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.file != nil {
+		err := w.file.Close()
+		w.file = nil
+		return err
+	}
+	return nil
 }
 
 func (w *dailyFileWriter) run() {
+	defer w.wg.Done()
 	for payload := range w.queue {
 		if err := w.write(payload); err != nil {
 			fmt.Fprintf(os.Stderr, "goo11y logger file writer error: %v\n", err)
 		}
 	}
+
+	w.mu.Lock()
+	if w.file != nil {
+		_ = w.file.Close()
+		w.file = nil
+	}
+	w.mu.Unlock()
 }
 
 func (w *dailyFileWriter) write(payload []byte) error {

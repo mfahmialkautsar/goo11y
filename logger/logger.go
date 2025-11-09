@@ -46,7 +46,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 		fanout.add(fmt.Sprintf("custom_%d", idx), w)
 	}
 	if cfg.File.Enabled {
-		fileWriter, err := newDailyFileWriter(cfg.File)
+		fileWriter, err := newDailyFileWriter(ctx, cfg.File)
 		if err != nil {
 			return nil, fmt.Errorf("setup file writer: %w", err)
 		}

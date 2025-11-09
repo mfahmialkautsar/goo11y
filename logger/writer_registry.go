@@ -36,6 +36,18 @@ func (f *writerRegistry) len() int {
 	return len(f.writers)
 }
 
+func (f *writerRegistry) close() error {
+	var firstErr error
+	for _, w := range f.writers {
+		if closer, ok := w.writer.(io.Closer); ok {
+			if err := closer.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
 func (f *writerRegistry) writer() io.Writer {
 	if len(f.writers) == 0 {
 		return io.Discard
