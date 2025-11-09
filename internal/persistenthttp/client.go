@@ -7,17 +7,34 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/internal/spool"
 )
 
-func NewClient(queueDir string, timeout time.Duration) (*http.Client, error) {
+type Client struct {
+	*http.Client
+	queue  *spool.Queue
+	ctx    context.Context
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func NewClient(queueDir string, timeout time.Duration) (*Client, error) {
+	return NewClientWithComponent(queueDir, timeout, "")
+}
+
+func NewClientWithComponent(queueDir string, timeout time.Duration, component string) (*Client, error) {
 	queue, err := spool.NewWithErrorLogger(queueDir, spool.ErrorLoggerFunc(func(err error) {
 		if err == nil {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "[persistenthttp] %v\n", err)
+		prefix := "[persistenthttp]"
+		if component != "" {
+			prefix = fmt.Sprintf("[%s/spool]", component)
+		}
+		fmt.Fprintf(os.Stderr, "%s %v\n", prefix, err)
 	}))
 	if err != nil {
 		return nil, err
@@ -29,14 +46,32 @@ func NewClient(queueDir string, timeout time.Duration) (*http.Client, error) {
 		Transport: transport,
 	}
 
-	queue.Start(context.Background(), spool.HTTPHandler(workerClient))
+	ctx, cancel := context.WithCancel(context.Background())
+	queue.Start(ctx, spool.HTTPHandler(workerClient))
 
 	persistent := &transportWrapper{queue: queue}
 
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: persistent,
+	return &Client{
+		Client: &http.Client{
+			Timeout:   timeout,
+			Transport: persistent,
+		},
+		queue:  queue,
+		ctx:    ctx,
+		cancel: cancel,
 	}, nil
+}
+
+func (c *Client) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.once.Do(func() {
+		if c.cancel != nil {
+			c.cancel()
+		}
+	})
+	return nil
 }
 
 type transportWrapper struct {
