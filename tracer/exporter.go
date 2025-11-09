@@ -32,7 +32,7 @@ func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 	}
 
 	if cfg.UseSpool {
-		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportTimeout)
+		client, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.ExportTimeout, "tracer")
 		if err != nil {
 			return nil, fmt.Errorf("create trace client: %w", err)
 		}

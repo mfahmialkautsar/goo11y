@@ -13,11 +13,19 @@ import (
 )
 
 func NewClient(queueDir string, timeout time.Duration) (*http.Client, error) {
+	return NewClientWithComponent(queueDir, timeout, "")
+}
+
+func NewClientWithComponent(queueDir string, timeout time.Duration, component string) (*http.Client, error) {
 	queue, err := spool.NewWithErrorLogger(queueDir, spool.ErrorLoggerFunc(func(err error) {
 		if err == nil {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "[persistenthttp] %v\n", err)
+		prefix := "[persistenthttp]"
+		if component != "" {
+			prefix = fmt.Sprintf("[%s/spool]", component)
+		}
+		fmt.Fprintf(os.Stderr, "%s %v\n", prefix, err)
 	}))
 	if err != nil {
 		return nil, err

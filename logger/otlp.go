@@ -174,9 +174,9 @@ func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.En
 		options = append(options, otlploghttp.WithHeaders(headers))
 	}
 	if cfg.UseSpool {
-		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.Timeout)
+		client, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.Timeout, "logger")
 		if err != nil {
-			return nil, fmt.Errorf("otlp http exporter: %w", err)
+			return nil, fmt.Errorf("create log client: %w", err)
 		}
 		options = append(options, otlploghttp.WithHTTPClient(client))
 	}

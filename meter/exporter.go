@@ -33,7 +33,7 @@ func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 	}
 
 	if cfg.UseSpool {
-		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportInterval)
+		client, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.ExportInterval, "meter")
 		if err != nil {
 			return nil, fmt.Errorf("create metric client: %w", err)
 		}
