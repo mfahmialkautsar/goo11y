@@ -63,7 +63,8 @@ func TestGlobalUpdateAndContext(t *testing.T) {
 
 	derived := log.With().Str("static", "value").Logger()
 	Use(&Logger{
-		Logger: &derived,
+		Logger:  &derived,
+		writers: log.writers,
 	})
 	Global().Info().Ctx(ctx).Str("foo", "bar").Msg("delegated")
 

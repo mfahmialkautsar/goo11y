@@ -19,10 +19,11 @@ func TestExportFailureLoggerSkipsFailingTransport(t *testing.T) {
 
 	base := zerolog.New(fanout.writer())
 	log := &Logger{
-		Logger: &base,
+		Logger:  &base,
+		writers: fanout,
 	}
 
-	handler := exportFailureLogger(log, fanout)
+	handler := exportFailureLogger(log)
 	handler("logger", "http", errors.New("boom"))
 
 	if otlpBuf.Len() != 0 {

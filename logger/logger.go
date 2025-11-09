@@ -21,9 +21,10 @@ const (
 	errorEventName = "log.error"
 )
 
-// Logger wraps zerolog.Logger with trace metadata injection.
+// Logger wraps zerolog.Logger with trace metadata injection and resource management.
 type Logger struct {
 	*zerolog.Logger
+	writers *writerRegistry
 }
 
 // New constructs a Zerolog-backed logger based on the provided configuration.
@@ -46,7 +47,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 		fanout.add(fmt.Sprintf("custom_%d", idx), w)
 	}
 	if cfg.File.Enabled {
-		fileWriter, err := newDailyFileWriter(cfg.File)
+		fileWriter, err := newDailyFileWriter(ctx, cfg.File)
 		if err != nil {
 			return nil, fmt.Errorf("setup file writer: %w", err)
 		}
@@ -89,12 +90,21 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 	base = base.Level(level)
 
 	logger := &Logger{
-		Logger: &base,
+		Logger:  &base,
+		writers: fanout,
 	}
 
-	otlputil.SetExportFailureHandler(exportFailureLogger(logger, fanout))
+	otlputil.SetExportFailureHandler(exportFailureLogger(logger))
 
 	return logger, nil
+}
+
+// Close shuts down the logger and releases any resources including file handles and background goroutines.
+func (l *Logger) Close() error {
+	if l == nil || l.writers == nil {
+		return nil
+	}
+	return l.writers.close()
 }
 
 // With returns a context for adding fields to the logger.
@@ -144,7 +154,7 @@ func (l *Logger) WithLevel(level zerolog.Level) *Event {
 	return &Event{Event: event.Caller(1)}
 }
 
-func exportFailureLogger(logger *Logger, outputs *writerRegistry) func(component, transport string, err error) {
+func exportFailureLogger(logger *Logger) func(component, transport string, err error) {
 	return func(component, transport string, err error) {
 		if err == nil {
 			return
@@ -155,10 +165,13 @@ func exportFailureLogger(logger *Logger, outputs *writerRegistry) func(component
 		}
 		exclusions := failureExclusions(component, transport)
 		targetLogger := logger
-		if outputs != nil && len(exclusions) > 0 {
-			writer := outputs.writerExcept(exclusions...)
+		if logger.writers != nil && len(exclusions) > 0 {
+			writer := logger.writers.writerExcept(exclusions...)
 			base := logger.Output(writer)
-			targetLogger = &Logger{Logger: &base}
+			targetLogger = &Logger{
+				Logger:  &base,
+				writers: logger.writers,
+			}
 		}
 		event := targetLogger.Error()
 		if component != "" {
