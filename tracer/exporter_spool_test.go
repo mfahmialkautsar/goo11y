@@ -57,7 +57,7 @@ func TestTracerExporterReturnsErrorOnFailure(t *testing.T) {
 		t.Fatalf("ParseEndpoint: %v", err)
 	}
 
-	exporter, err := setupHTTPExporter(context.Background(), cfg, endpoint)
+	exporter, _, err := setupHTTPExporter(context.Background(), cfg, endpoint)
 	if err != nil {
 		t.Fatalf("setupHTTPExporter: %v", err)
 	}
