@@ -17,7 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdkmetric.Exporter, error) {
+func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdkmetric.Exporter, *persistenthttp.Client, error) {
 	opts := []otlpmetrichttp.Option{
 		otlpmetrichttp.WithEndpoint(endpoint.Host),
 		otlpmetrichttp.WithURLPath(endpoint.PathWithSuffix("/v1/metrics")),
@@ -32,20 +32,25 @@ func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 		opts = append(opts, otlpmetrichttp.WithHeaders(headers))
 	}
 
+	var spoolClient *persistenthttp.Client
 	if cfg.UseSpool {
-		client, err := persistenthttp.NewClient(cfg.QueueDir, cfg.ExportInterval)
+		client, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.ExportInterval, "meter")
 		if err != nil {
-			return nil, fmt.Errorf("create metric client: %w", err)
+			return nil, nil, fmt.Errorf("create metric client: %w", err)
 		}
-		opts = append(opts, otlpmetrichttp.WithHTTPClient(client))
+		spoolClient = client
+		opts = append(opts, otlpmetrichttp.WithHTTPClient(client.Client))
 	}
 	opts = append(opts, otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: true}))
 
 	exporter, err := otlpmetrichttp.New(ctx, opts...)
 	if err != nil {
-		return nil, err
+		if spoolClient != nil {
+			_ = spoolClient.Close()
+		}
+		return nil, nil, err
 	}
-	return wrapMetricExporter(exporter, "meter", cfg.Exporter, nil), nil
+	return exporter, spoolClient, nil
 }
 
 func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdkmetric.Exporter, error) {
@@ -94,28 +99,33 @@ func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 		}
 		return nil, err
 	}
-	return wrapMetricExporter(exporter, "meter", cfg.Exporter, spoolManager), nil
+	return wrapMetricExporter(exporter, "meter", cfg.Exporter, spoolManager, nil), nil
 }
 
 type metricExporterWithLogging struct {
 	sdkmetric.Exporter
-	component string
-	transport string
-	spool     *persistentgrpc.Manager
+	component  string
+	transport  string
+	spool      *persistentgrpc.Manager
+	httpClient *persistenthttp.Client
 }
 
-func wrapMetricExporter(exp sdkmetric.Exporter, component, transport string, spool *persistentgrpc.Manager) sdkmetric.Exporter {
+func wrapMetricExporter(exp sdkmetric.Exporter, component, transport string, spool *persistentgrpc.Manager, httpClient *persistenthttp.Client) sdkmetric.Exporter {
 	if exp == nil {
 		if spool != nil {
 			_ = spool.Stop(context.Background())
 		}
+		if httpClient != nil {
+			_ = httpClient.Close()
+		}
 		return exp
 	}
 	return &metricExporterWithLogging{
-		Exporter:  exp,
-		component: component,
-		transport: transport,
-		spool:     spool,
+		Exporter:   exp,
+		component:  component,
+		transport:  transport,
+		spool:      spool,
+		httpClient: httpClient,
 	}
 }
 
@@ -151,6 +161,11 @@ func (m metricExporterWithLogging) Shutdown(ctx context.Context) error {
 	if m.spool != nil {
 		if stopErr := m.spool.Stop(ctx); stopErr != nil && err == nil {
 			err = stopErr
+		}
+	}
+	if m.httpClient != nil {
+		if closeErr := m.httpClient.Close(); closeErr != nil && err == nil {
+			err = closeErr
 		}
 	}
 	return err
