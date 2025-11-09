@@ -49,12 +49,15 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		)
 		if cfg.Logger.UseGlobal {
 			err = logger.Init(ctx, cfg.Logger)
+			if err != nil {
+				return nil, fmt.Errorf("setup logger: %w", err)
+			}
 			log = logger.Global()
 		} else {
 			log, err = logger.New(ctx, cfg.Logger)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("setup logger: %w", err)
+			if err != nil {
+				return nil, fmt.Errorf("setup logger: %w", err)
+			}
 		}
 		tele.Logger = log
 	}
@@ -66,12 +69,15 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		)
 		if cfg.Tracer.UseGlobal {
 			err = tracer.Init(ctx, cfg.Tracer, res)
+			if err != nil {
+				return nil, fmt.Errorf("setup tracer: %w", err)
+			}
 			provider = tracer.Global()
 		} else {
 			provider, err = tracer.Setup(ctx, cfg.Tracer, res)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("setup tracer: %w", err)
+			if err != nil {
+				return nil, fmt.Errorf("setup tracer: %w", err)
+			}
 		}
 		tele.Tracer = provider
 		tele.shutdownHooks = append(tele.shutdownHooks, func(ctx context.Context) error {
@@ -86,12 +92,15 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		)
 		if cfg.Meter.UseGlobal {
 			err = meter.Init(ctx, cfg.Meter, res)
+			if err != nil {
+				return nil, fmt.Errorf("setup meter: %w", err)
+			}
 			provider = meter.Global()
 		} else {
 			provider, err = meter.Setup(ctx, cfg.Meter, res)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("setup meter: %w", err)
+			if err != nil {
+				return nil, fmt.Errorf("setup meter: %w", err)
+			}
 		}
 		tele.Meter = provider
 		tele.shutdownHooks = append(tele.shutdownHooks, func(ctx context.Context) error {
@@ -118,12 +127,15 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		)
 		if cfg.Profiler.UseGlobal {
 			err = profiler.Init(cfg.Profiler, tele.Logger)
+			if err != nil {
+				return nil, fmt.Errorf("setup profiler: %w", err)
+			}
 			controller = profiler.Global()
 		} else {
 			controller, err = profiler.Setup(cfg.Profiler, tele.Logger)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("setup profiler: %w", err)
+			if err != nil {
+				return nil, fmt.Errorf("setup profiler: %w", err)
+			}
 		}
 		tele.Profiler = controller
 		tele.shutdownHooks = append(tele.shutdownHooks, func(context.Context) error {
