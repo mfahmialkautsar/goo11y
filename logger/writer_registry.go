@@ -38,7 +38,7 @@ func (f *writerRegistry) len() int {
 
 func (f *writerRegistry) writer() io.Writer {
 	if len(f.writers) == 0 {
-		return nilWriter{}
+		return io.Discard
 	}
 	return fanoutWriter{writers: append([]namedWriter(nil), f.writers...)}
 }
@@ -90,11 +90,5 @@ func (w fanoutWriter) Write(p []byte) (int, error) {
 	if firstErr != nil {
 		return len(p), firstErr
 	}
-	return len(p), nil
-}
-
-type nilWriter struct{}
-
-func (nilWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }

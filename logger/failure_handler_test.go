@@ -19,11 +19,10 @@ func TestExportFailureLoggerSkipsFailingTransport(t *testing.T) {
 
 	base := zerolog.New(fanout.writer())
 	log := &Logger{
-		Logger:  &base,
-		outputs: fanout,
+		Logger: &base,
 	}
 
-	handler := exportFailureLogger(log)
+	handler := exportFailureLogger(log, fanout)
 	handler("logger", "http", errors.New("boom"))
 
 	if otlpBuf.Len() != 0 {
@@ -105,12 +104,5 @@ func TestFanoutWriterHandlesNil(t *testing.T) {
 	}
 	if buf.String() != "payload" {
 		t.Fatalf("expected buffer to receive payload, got %q", buf.String())
-	}
-}
-
-func TestNilWriterWrite(t *testing.T) {
-	data := []byte("noop")
-	if n, err := (nilWriter{}).Write(data); err != nil || n != len(data) {
-		t.Fatalf("nilWriter returned n=%d err=%v", n, err)
 	}
 }

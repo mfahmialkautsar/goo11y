@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"runtime"
@@ -25,7 +24,6 @@ const (
 // Logger wraps zerolog.Logger with trace metadata injection.
 type Logger struct {
 	*zerolog.Logger
-	outputs *writerRegistry
 }
 
 // New constructs a Zerolog-backed logger based on the provided configuration.
@@ -91,11 +89,10 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 	base = base.Level(level)
 
 	logger := &Logger{
-		Logger:  &base,
-		outputs: fanout,
+		Logger: &base,
 	}
 
-	otlputil.SetExportFailureHandler(exportFailureLogger(logger))
+	otlputil.SetExportFailureHandler(exportFailureLogger(logger, fanout))
 
 	return logger, nil
 }
@@ -147,7 +144,7 @@ func (l *Logger) WithLevel(level zerolog.Level) *Event {
 	return &Event{Event: event.Caller(1)}
 }
 
-func exportFailureLogger(logger *Logger) func(component, transport string, err error) {
+func exportFailureLogger(logger *Logger, outputs *writerRegistry) func(component, transport string, err error) {
 	return func(component, transport string, err error) {
 		if err == nil {
 			return
@@ -156,27 +153,21 @@ func exportFailureLogger(logger *Logger) func(component, transport string, err e
 			log.Printf("telemetry export failure (component=%s transport=%s): %v", component, transport, err)
 			return
 		}
-
 		exclusions := failureExclusions(component, transport)
-		var targetWriter io.Writer
-		if logger.outputs != nil && len(exclusions) > 0 {
-			targetWriter = logger.outputs.writerExcept(exclusions...)
-		} else if logger.outputs != nil {
-			targetWriter = logger.outputs.writer()
-		} else {
-			targetWriter = os.Stderr
+		targetLogger := logger
+		if outputs != nil && len(exclusions) > 0 {
+			writer := outputs.writerExcept(exclusions...)
+			base := logger.Output(writer)
+			targetLogger = &Logger{Logger: &base}
 		}
-
-		clonedBaseLogger := logger.Logger.Output(targetWriter)
-
-		zerologEvent := clonedBaseLogger.Error().Stack().Caller(1)
+		event := targetLogger.Error()
 		if component != "" {
-			zerologEvent = zerologEvent.Str("component", component)
+			event = event.Str("component", component)
 		}
 		if transport != "" {
-			zerologEvent = zerologEvent.Str("transport", transport)
+			event = event.Str("transport", transport)
 		}
-		zerologEvent.Err(err).Msg("telemetry export failure")
+		event.Err(err).Msg("telemetry export failure")
 	}
 }
 
