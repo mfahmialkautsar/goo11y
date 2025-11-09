@@ -85,3 +85,53 @@ func TestSpanContextExtraction(t *testing.T) {
 		t.Fatal("expected sampled span context")
 	}
 }
+
+func TestTracerForceFlush(t *testing.T) {
+	ctx := context.Background()
+	res := resource.Empty()
+
+	cfg := Config{
+		Enabled:     true,
+		Endpoint:    "http://localhost:9999",
+		Exporter:    "http",
+		ServiceName: "test-tracer-flush",
+	}
+
+	provider, err := Setup(ctx, cfg, res)
+	if err != nil {
+		t.Fatalf("setup tracer: %v", err)
+	}
+	defer func() {
+		_ = provider.Shutdown(ctx)
+	}()
+
+	if err := provider.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush: %v", err)
+	}
+}
+
+func TestTracerRegisterSpanProcessor(t *testing.T) {
+	ctx := context.Background()
+	res := resource.Empty()
+
+	cfg := Config{
+		Enabled:     true,
+		Endpoint:    "http://localhost:9999",
+		Exporter:    "http",
+		ServiceName: "test-span-processor",
+	}
+
+	provider, err := Setup(ctx, cfg, res)
+	if err != nil {
+		t.Fatalf("setup tracer: %v", err)
+	}
+	defer func() {
+		_ = provider.Shutdown(ctx)
+	}()
+
+	processor := sdktrace.NewBatchSpanProcessor(nil)
+	defer func() {
+		_ = processor.Shutdown(ctx)
+	}()
+	provider.RegisterSpanProcessor(processor)
+}

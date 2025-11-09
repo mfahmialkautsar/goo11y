@@ -44,3 +44,27 @@ func TestMeterDefaultsDisableSpool(t *testing.T) {
 		t.Fatal("expected meter spool to be disabled by default")
 	}
 }
+
+func TestMeterForceFlush(t *testing.T) {
+	ctx := context.Background()
+	res := resource.Empty()
+
+	cfg := Config{
+		Enabled:     true,
+		Endpoint:    "http://localhost:9999",
+		Exporter:    "http",
+		ServiceName: "test-meter-flush",
+	}
+
+	provider, err := Setup(ctx, cfg, res)
+	if err != nil {
+		t.Fatalf("setup meter: %v", err)
+	}
+	defer func() {
+		_ = provider.Shutdown(ctx)
+	}()
+
+	if err := provider.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush: %v", err)
+	}
+}

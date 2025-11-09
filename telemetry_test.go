@@ -15,6 +15,7 @@ import (
 	"github.com/grafana/pyroscope-go"
 	"github.com/mfahmialkautsar/goo11y/internal/testutil"
 	"github.com/mfahmialkautsar/goo11y/logger"
+	"github.com/mfahmialkautsar/goo11y/meter"
 	"github.com/mfahmialkautsar/goo11y/profiler"
 	"github.com/mfahmialkautsar/goo11y/tracer"
 	"go.opentelemetry.io/otel"
@@ -347,5 +348,43 @@ func TestTelemetryLinksTracesToProfiles(t *testing.T) {
 
 	if !matched {
 		t.Fatalf("span profiler-link-span not found with expected attributes: %+v", spans)
+	}
+}
+
+func TestTelemetryForceFlush(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := Config{
+		Resource: ResourceConfig{
+			ServiceName: "test-flush",
+		},
+		Logger: logger.Config{
+			Enabled:     true,
+			Level:       "info",
+			ServiceName: "test-flush",
+			Console:     false,
+		},
+		Tracer: tracer.Config{
+			Enabled:     true,
+			Endpoint:    "http://localhost:9999",
+			ServiceName: "test-flush",
+		},
+		Meter: meter.Config{
+			Enabled:     true,
+			Endpoint:    "http://localhost:9999",
+			ServiceName: "test-flush",
+		},
+	}
+
+	tele, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() {
+		_ = tele.Shutdown(ctx)
+	}()
+
+	if err := tele.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush: %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package logger
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/internal/attrutil"
+	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -542,4 +544,157 @@ func TestAttributeFromValueCoversTypes(t *testing.T) {
 		}
 		tc.check(kv)
 	}
+}
+
+func TestLoggerGlobalDebug(t *testing.T) {
+	Init(context.Background(), Config{
+		Enabled:     true,
+		Level:       "debug",
+		ServiceName: "test-debug",
+		Console:     false,
+	})
+	defer Use(nil)
+
+	Debug().Str("key", "value").Msg("debug message")
+}
+
+func TestLoggerGlobalWarn(t *testing.T) {
+	Init(context.Background(), Config{
+		Enabled:     true,
+		Level:       "warn",
+		ServiceName: "test-warn",
+		Console:     false,
+	})
+	defer Use(nil)
+
+	Warn().Str("key", "value").Msg("warn message")
+}
+
+func TestLoggerGlobalWith(t *testing.T) {
+	Init(context.Background(), Config{
+		Enabled:     true,
+		Level:       "info",
+		ServiceName: "test-with",
+		Console:     false,
+	})
+	defer Use(nil)
+
+	logger := With().Str("component", "test").Logger()
+	logger.Info().Msg("with logger")
+}
+
+func TestLoggerEventFieldTypes(t *testing.T) {
+	var buf bytes.Buffer
+	logger, err := New(context.Background(), Config{
+		Enabled:     true,
+		Level:       "debug",
+		ServiceName: "test-fields",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	logger.Info().
+		Strs("strings", []string{"a", "b"}).
+		Int8("int8", 8).
+		Int16("int16", 16).
+		Int32("int32", 32).
+		Int64("int64", 64).
+		Ints("ints", []int{1, 2, 3}).
+		Uint("uint", 1).
+		Uint8("uint8", 8).
+		Uint16("uint16", 16).
+		Uint32("uint32", 32).
+		Uint64("uint64", 64).
+		Uints("uints", []uint{1, 2}).
+		Bools("bools", []bool{true, false}).
+		Float32("float32", 3.14).
+		Floats32("floats32", []float32{1.1, 2.2}).
+		Floats64("floats64", []float64{3.3, 4.4}).
+		Dur("duration", time.Second).
+		Durs("durations", []time.Duration{time.Second, time.Minute}).
+		Time("time", time.Now()).
+		Times("times", []time.Time{time.Now(), time.Now()}).
+		TimeDiff("diff", time.Now().Add(time.Second), time.Now()).
+		Timestamp().
+		Any("any", map[string]int{"key": 42}).
+		Interface("iface", struct{ Name string }{"test"}).
+		Bytes("bytes", []byte("data")).
+		Hex("hex", []byte{0x01, 0x02}).
+		AnErr("anerr", errors.New("error1")).
+		Errs("errs", []error{errors.New("e1"), errors.New("e2")}).
+		RawJSON("raw", []byte(`{"key":"value"}`)).
+		Caller().
+		Stack().
+		Msg("field types")
+
+	if buf.Len() == 0 {
+		t.Error("expected log output")
+	}
+}
+
+func TestLoggerEventEnabled(t *testing.T) {
+	logger, err := New(context.Background(), Config{
+		Enabled:     true,
+		Level:       "info",
+		ServiceName: "test-enabled",
+		Console:     false,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	event := logger.Debug()
+	if event.Enabled() {
+		t.Error("debug event should not be enabled at info level")
+	}
+	event.Discard()
+
+	event = logger.Info()
+	if !event.Enabled() {
+		t.Error("info event should be enabled at info level")
+	}
+	event.Msg("enabled")
+}
+
+func TestLoggerWithLevel(t *testing.T) {
+	Init(context.Background(), Config{
+		Enabled:     true,
+		Level:       "info",
+		ServiceName: "test-level",
+		Console:     false,
+	})
+	defer Use(nil)
+
+	WithLevel(zerolog.WarnLevel).Msg("warn via level")
+}
+
+func TestLoggerInstanceWithLevel(t *testing.T) {
+	logger, err := New(context.Background(), Config{
+		Enabled:     true,
+		Level:       "info",
+		ServiceName: "test-level-instance",
+		Console:     false,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	logger.WithLevel(zerolog.ErrorLevel).Msg("error via level")
+}
+
+func TestLoggerInstanceErr(t *testing.T) {
+	logger, err := New(context.Background(), Config{
+		Enabled:     true,
+		Level:       "info",
+		ServiceName: "test-err",
+		Console:     false,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	logger.Err(errors.New("test error")).Msg("error message")
 }

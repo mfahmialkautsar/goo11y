@@ -75,3 +75,21 @@ func TestUseNilResetsGlobalMeter(t *testing.T) {
 		t.Fatalf("shutdown noop provider: %v", err)
 	}
 }
+
+func TestGlobalForceFlush(t *testing.T) {
+	ctx := context.Background()
+	res := resource.Empty()
+
+	cfg := Config{
+		Enabled:     true,
+		Endpoint:    "http://localhost:9999",
+		ServiceName: "test-global-flush",
+	}
+
+	Init(ctx, cfg, res)
+	defer Use(nil)
+
+	if err := ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush: %v", err)
+	}
+}
