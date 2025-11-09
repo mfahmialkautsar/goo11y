@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
+	"github.com/rs/zerolog"
 )
 
 type namedWriter struct {
@@ -34,6 +35,37 @@ func (f *writerRegistry) add(name string, writer io.Writer) {
 
 func (f *writerRegistry) len() int {
 	return len(f.writers)
+}
+
+func (f *writerRegistry) close() error {
+	var firstErr error
+	for _, w := range f.writers {
+		// Don't close standard streams or zerolog.ConsoleWriter
+		switch w.writer.(type) {
+		case *os.File:
+			// Only close if it's not a standard stream
+			if file, ok := w.writer.(*os.File); ok {
+				if file == os.Stdout || file == os.Stderr || file == os.Stdin {
+					continue
+				}
+			}
+		case zerolog.ConsoleWriter:
+			// ConsoleWriter wraps os.Stdout/os.Stderr, don't close
+			continue
+		}
+
+		// Also check interface equality for standard streams
+		if w.writer == os.Stdout || w.writer == os.Stderr || w.writer == os.Stdin {
+			continue
+		}
+
+		if closer, ok := w.writer.(io.Closer); ok {
+			if err := closer.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }
 
 func (f *writerRegistry) writer() io.Writer {
