@@ -86,7 +86,9 @@ func TestGlobalForceFlush(t *testing.T) {
 		ServiceName: "test-global-flush",
 	}
 
-	Init(ctx, cfg, res)
+	if err := Init(ctx, cfg, res); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
 	defer Use(nil)
 
 	if err := ForceFlush(ctx); err != nil {

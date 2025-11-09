@@ -244,8 +244,8 @@ func TestNewInitializesLoggerOnly(t *testing.T) {
 	if tele.Tracer != nil || tele.Meter != nil || tele.Profiler != nil {
 		t.Fatalf("expected other components nil, got %+v", tele)
 	}
-	if len(tele.shutdownHooks) != 0 {
-		t.Fatalf("unexpected shutdown hooks: %v", tele.shutdownHooks)
+	if len(tele.shutdownHooks) != 1 {
+		t.Errorf("expected 1 shutdown hook for logger cleanup, got %d", len(tele.shutdownHooks))
 	}
 }
 

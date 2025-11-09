@@ -547,36 +547,42 @@ func TestAttributeFromValueCoversTypes(t *testing.T) {
 }
 
 func TestLoggerGlobalDebug(t *testing.T) {
-	Init(context.Background(), Config{
+	if err := Init(context.Background(), Config{
 		Enabled:     true,
 		Level:       "debug",
 		ServiceName: "test-debug",
 		Console:     false,
-	})
+	}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
 	defer Use(nil)
 
 	Debug().Str("key", "value").Msg("debug message")
 }
 
 func TestLoggerGlobalWarn(t *testing.T) {
-	Init(context.Background(), Config{
+	if err := Init(context.Background(), Config{
 		Enabled:     true,
 		Level:       "warn",
 		ServiceName: "test-warn",
 		Console:     false,
-	})
+	}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
 	defer Use(nil)
 
 	Warn().Str("key", "value").Msg("warn message")
 }
 
 func TestLoggerGlobalWith(t *testing.T) {
-	Init(context.Background(), Config{
+	if err := Init(context.Background(), Config{
 		Enabled:     true,
 		Level:       "info",
 		ServiceName: "test-with",
 		Console:     false,
-	})
+	}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
 	defer Use(nil)
 
 	logger := With().Str("component", "test").Logger()
@@ -660,15 +666,17 @@ func TestLoggerEventEnabled(t *testing.T) {
 }
 
 func TestLoggerWithLevel(t *testing.T) {
-	Init(context.Background(), Config{
+	if err := Init(context.Background(), Config{
 		Enabled:     true,
 		Level:       "info",
 		ServiceName: "test-level",
 		Console:     false,
-	})
+	}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
 	defer Use(nil)
 
-	WithLevel(zerolog.WarnLevel).Msg("warn via level")
+	WithLevel(zerolog.InfoLevel).Msg("info level")
 }
 
 func TestLoggerInstanceWithLevel(t *testing.T) {
