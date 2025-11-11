@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"unsafe"
 
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	pkgerrors "github.com/pkg/errors"
@@ -215,21 +216,29 @@ func marshalStackTrace(err error) any {
 	if err == nil {
 		return nil
 	}
-	seen := make(map[error]struct{})
-	queue := []error{err}
 	var collected []runtime.Frame
 	frameSeen := make(map[string]struct{})
+	visited := make(map[uintptr]struct{})
 
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
+	var walk func(error)
+	walk = func(current error) {
 		if current == nil {
-			continue
+			return
 		}
-		if _, ok := seen[current]; ok {
-			continue
+
+		ptr := errorPointer(current)
+		if _, seen := visited[ptr]; seen {
+			return
 		}
-		seen[current] = struct{}{}
+		visited[ptr] = struct{}{}
+
+		if unwrapper, ok := current.(interface{ Unwrap() []error }); ok {
+			for _, e := range unwrapper.Unwrap() {
+				walk(e)
+			}
+		} else if next := errors.Unwrap(current); next != nil {
+			walk(next)
+		}
 
 		if tracer, ok := current.(stackTracer); ok {
 			pcs := make([]uintptr, 0, len(tracer.StackTrace()))
@@ -253,15 +262,9 @@ func marshalStackTrace(err error) any {
 				}
 			}
 		}
-
-		if unwrapper, ok := current.(interface{ Unwrap() []error }); ok {
-			queue = append(queue, unwrapper.Unwrap()...)
-			continue
-		}
-		if next := errors.Unwrap(current); next != nil {
-			queue = append(queue, next)
-		}
 	}
+
+	walk(err)
 
 	if len(collected) == 0 {
 		return nil
@@ -276,4 +279,8 @@ func marshalStackTrace(err error) any {
 		result = append(result, entry)
 	}
 	return result
+}
+
+func errorPointer(err error) uintptr {
+	return (*[2]uintptr)(unsafe.Pointer(&err))[1]
 }

@@ -329,6 +329,17 @@ func TestLoggerErrorIncludesStackTrace(t *testing.T) {
 	assertStackContains(t, funcs, "nestedInnerError")
 	assertStackContains(t, funcs, "nestedMiddleError")
 	assertStackContains(t, funcs, "nestedOuterError")
+
+	innerIdx := findStackFrameIndex(frames, "nestedInnerError")
+	middleIdx := findStackFrameIndex(frames, "nestedMiddleError")
+	outerIdx := findStackFrameIndex(frames, "nestedOuterError")
+	if innerIdx == -1 || middleIdx == -1 || outerIdx == -1 {
+		t.Fatalf("missing frames in stack: inner=%d middle=%d outer=%d", innerIdx, middleIdx, outerIdx)
+	}
+	if innerIdx >= middleIdx || middleIdx >= outerIdx {
+		t.Errorf("stack order incorrect: inner@%d middle@%d outer@%d (expected inner < middle < outer)", innerIdx, middleIdx, outerIdx)
+	}
+
 	if msg, ok := entry["error"].(string); !ok || !strings.Contains(msg, "nested boom") || !strings.Contains(msg, "outer failed") {
 		t.Fatalf("unexpected error field: %v", entry["error"])
 	}
@@ -375,6 +386,16 @@ func TestLoggerStackMethodUsesErrorValue(t *testing.T) {
 	inner := findStackFrame(t, frames, "nestedInnerError")
 	if !strings.Contains(inner.Location, "logger/logger_test_helpers_test.go:") {
 		t.Fatalf("unexpected inner location: %s", inner.Location)
+	}
+
+	innerIdx := findStackFrameIndex(frames, "nestedInnerError")
+	middleIdx := findStackFrameIndex(frames, "nestedMiddleError")
+	outerIdx := findStackFrameIndex(frames, "nestedOuterError")
+	if innerIdx == -1 || middleIdx == -1 || outerIdx == -1 {
+		t.Fatalf("missing frames in stack: inner=%d middle=%d outer=%d", innerIdx, middleIdx, outerIdx)
+	}
+	if innerIdx >= middleIdx || middleIdx >= outerIdx {
+		t.Errorf("stack order incorrect: inner@%d middle@%d outer@%d (expected inner < middle < outer)", innerIdx, middleIdx, outerIdx)
 	}
 }
 

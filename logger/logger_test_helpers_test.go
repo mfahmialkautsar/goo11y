@@ -131,6 +131,15 @@ func findStackFrame(t *testing.T, frames []logStackFrame, contains string) logSt
 	return logStackFrame{}
 }
 
+func findStackFrameIndex(frames []logStackFrame, contains string) int {
+	for i, frame := range frames {
+		if strings.Contains(frame.Function, contains) {
+			return i
+		}
+	}
+	return -1
+}
+
 func parseStackLocation(location string) (file string, line int, column int, ok bool) {
 	column = -1
 	if location == "" {
