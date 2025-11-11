@@ -498,7 +498,7 @@ func (q *Queue) cleanOldFiles() error {
 
 	sortTokens(tokens)
 	excess := len(tokens) - queueMaxFiles
-	for i := 0; i < excess; i++ {
+	for i := range excess {
 		name := tokens[i].name
 		if err := q.Complete(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			q.logError(fmt.Errorf("spool: remove overflow file %s: %w", name, err))
