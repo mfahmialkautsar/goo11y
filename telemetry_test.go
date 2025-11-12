@@ -217,8 +217,12 @@ func TestTelemetryShutdownNil(t *testing.T) {
 
 func TestNewValidatesConfig(t *testing.T) {
 	cfg := Config{}
-	if _, err := New(context.Background(), cfg); err == nil {
-		t.Fatal("expected validation error when service name missing")
+	tele, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error with default config: %v", err)
+	}
+	if tele == nil {
+		t.Fatal("expected telemetry instance")
 	}
 }
 

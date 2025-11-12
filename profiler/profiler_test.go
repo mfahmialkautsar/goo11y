@@ -26,8 +26,12 @@ func TestSetupRequiresServerAndService(t *testing.T) {
 		t.Fatal("expected error for missing server URL")
 	}
 
-	_, err = Setup(Config{Enabled: true, ServerURL: "http://localhost:4040"}, nil)
-	if err == nil {
-		t.Fatal("expected error for missing service name")
+	controller, err := Setup(Config{Enabled: true, ServerURL: "http://localhost:4040"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error with default service name: %v", err)
 	}
+	if controller == nil {
+		t.Fatal("expected controller instance")
+	}
+	_ = controller.Stop()
 }

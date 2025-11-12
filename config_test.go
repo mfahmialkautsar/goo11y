@@ -2,7 +2,6 @@ package goo11y
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/mfahmialkautsar/goo11y/logger"
@@ -71,14 +70,15 @@ func TestConfigApplyDefaultsRespectsExistingNames(t *testing.T) {
 func TestConfigValidateRequiresServiceName(t *testing.T) {
 	t.Parallel()
 
+	// Service name now has a default, so validation should pass
 	empty := Config{}
 	empty.applyDefaults()
 	err := empty.validate()
-	if err == nil {
-		t.Fatal("expected validation failure when service name missing")
+	if err != nil {
+		t.Fatalf("unexpected validation failure with default service name: %v", err)
 	}
-	if !strings.Contains(err.Error(), "Resource.ServiceName") {
-		t.Fatalf("unexpected validation error: %v", err)
+	if empty.Resource.ServiceName != "unknown-service" {
+		t.Fatalf("expected default service name, got %q", empty.Resource.ServiceName)
 	}
 
 	cfg := Config{Resource: ResourceConfig{ServiceName: "orders"}}

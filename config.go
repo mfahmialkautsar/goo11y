@@ -50,20 +50,23 @@ func (f ResourceCustomizerFunc) Customize(ctx context.Context, res *resource.Res
 }
 
 func (c *Config) applyDefaults() {
-	_ = defaults.Set(c)
+	_ = defaults.Set(&c.Resource)
 
-	if c.Logger.ServiceName == "" {
-		c.Logger.ServiceName = c.Resource.ServiceName
+	propagateServiceName := func(target *string) {
+		if *target == "" || *target == "unknown-service" {
+			*target = c.Resource.ServiceName
+		}
 	}
-	if c.Tracer.ServiceName == "" {
-		c.Tracer.ServiceName = c.Resource.ServiceName
-	}
-	if c.Meter.ServiceName == "" {
-		c.Meter.ServiceName = c.Resource.ServiceName
-	}
-	if c.Profiler.ServiceName == "" {
-		c.Profiler.ServiceName = c.Resource.ServiceName
-	}
+
+	propagateServiceName(&c.Logger.ServiceName)
+	propagateServiceName(&c.Tracer.ServiceName)
+	propagateServiceName(&c.Meter.ServiceName)
+	propagateServiceName(&c.Profiler.ServiceName)
+
+	c.Logger = c.Logger.ApplyDefaults()
+	c.Tracer = c.Tracer.ApplyDefaults()
+	c.Meter = c.Meter.ApplyDefaults()
+	c.Profiler = c.Profiler.ApplyDefaults()
 }
 
 func (c Config) validate() error {
