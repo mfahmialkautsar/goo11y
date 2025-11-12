@@ -19,7 +19,7 @@ type Config struct {
 	Exporter       string `default:"http" validate:"oneof=http grpc"`
 	Async          bool
 	UseSpool       bool
-	ServiceName    string        `validate:"required_if=Enabled true"`
+	ServiceName    string        `default:"unknown-service"`
 	ExportInterval time.Duration `default:"10s" validate:"gt=0"`
 	QueueDir       string
 	Runtime        RuntimeConfig

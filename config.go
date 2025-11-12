@@ -24,7 +24,7 @@ type Config struct {
 
 // ResourceConfig describes service identity attributes propagated to telemetry backends.
 type ResourceConfig struct {
-	ServiceName    string `validate:"required"`
+	ServiceName    string `default:"unknown-service"`
 	ServiceVersion string `default:"0.1.0"`
 	Environment    string
 	Attributes     map[string]string

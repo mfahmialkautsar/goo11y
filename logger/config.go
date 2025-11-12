@@ -18,7 +18,7 @@ type Config struct {
 	Enabled     bool
 	Level       string `default:"info"`
 	Environment string `default:"development"`
-	ServiceName string `validate:"required_if=Enabled true"`
+	ServiceName string `default:"unknown-service"`
 	Console     bool   `default:"true"`
 	Writers     []io.Writer
 	OTLP        OTLPConfig

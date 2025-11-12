@@ -13,7 +13,7 @@ import (
 type Config struct {
 	Enabled              bool
 	ServerURL            string `validate:"required_if=Enabled true"`
-	ServiceName          string `validate:"required_if=Enabled true"`
+	ServiceName          string `default:"unknown-service"`
 	Tags                 map[string]string
 	TenantID             string `default:"anonymous"`
 	MutexProfileFraction int    `default:"5" validate:"gte=0"`
