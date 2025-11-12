@@ -141,7 +141,7 @@ func (l *Logger) Fatal() *Event {
 // Err opens an error level event with the given error wrapped with stack trace.
 func (l *Logger) Err(err error) *Event {
 	if _, ok := err.(stackTracer); !ok {
-		err = pkgerrors.WithStack(err)
+		err = withStackSkip(err, 1)
 	}
 	return &Event{Event: l.Logger.Error().Err(err).Stack().Caller(1)}
 }
@@ -200,6 +200,39 @@ func failureExclusions(component, transport string) []string {
 
 type stackTracer interface {
 	StackTrace() pkgerrors.StackTrace
+}
+
+type stackError struct {
+	err   error
+	stack []uintptr
+}
+
+func (e *stackError) Error() string {
+	return e.err.Error()
+}
+
+func (e *stackError) Unwrap() error {
+	return e.err
+}
+
+func (e *stackError) StackTrace() pkgerrors.StackTrace {
+	frames := make([]pkgerrors.Frame, len(e.stack))
+	for i, pc := range e.stack {
+		frames[i] = pkgerrors.Frame(pc)
+	}
+	return frames
+}
+
+func withStackSkip(err error, skip int) error {
+	const depth = 32
+	var pcs [depth]uintptr
+	n := runtime.Callers(skip+2, pcs[:])
+	if n == 0 {
+		return &stackError{err: err, stack: nil}
+	}
+	stack := make([]uintptr, n)
+	copy(stack, pcs[:n])
+	return &stackError{err: err, stack: stack}
 }
 
 func frameLocation(frame runtime.Frame) string {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	pkgerrors "github.com/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -19,7 +18,7 @@ func (e *Event) Err(err error) *Event {
 		return e
 	}
 	if _, ok := err.(stackTracer); !ok {
-		err = pkgerrors.WithStack(err)
+		err = withStackSkip(err, 1)
 	}
 	e.Event = e.Event.Err(err)
 	return e
@@ -217,7 +216,7 @@ func (e *Event) AnErr(key string, err error) *Event {
 		return e
 	}
 	if _, ok := err.(stackTracer); !ok {
-		err = pkgerrors.WithStack(err)
+		err = withStackSkip(err, 1)
 	}
 	e.Event = e.Event.AnErr(key, err)
 	return e
@@ -229,7 +228,7 @@ func (e *Event) Errs(key string, errs []error) *Event {
 	for i, err := range errs {
 		if err != nil {
 			if _, ok := err.(stackTracer); !ok {
-				wrappedErrs[i] = pkgerrors.WithStack(err)
+				wrappedErrs[i] = withStackSkip(err, 1)
 			} else {
 				wrappedErrs[i] = err
 			}
