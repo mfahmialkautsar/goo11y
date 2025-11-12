@@ -2,8 +2,10 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -280,6 +282,39 @@ func attrValue(t *testing.T, attrs []attribute.KeyValue, key string) any {
 	}
 	t.Fatalf("attribute %s not found", key)
 	return nil
+}
+
+func newBufferedLogger(t *testing.T, service, level string) (*Logger, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: service,
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+	}
+	if level != "" {
+		cfg.Level = level
+	}
+	log, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+	t.Cleanup(func() {
+		_ = log.Close()
+	})
+	return log, &buf
+}
+
+func useGlobalLogger(t *testing.T, log *Logger) {
+	t.Helper()
+	Use(log)
+	t.Cleanup(func() {
+		globalLogger.Store(nil)
+	})
 }
 
 type stringerStub struct{}

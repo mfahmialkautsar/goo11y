@@ -41,30 +41,34 @@ func With() zerolog.Context {
 
 // Debug opens a debug event through the global logger.
 func Debug() *Event {
-	return Global().Debug()
+	return &Event{Event: Global().Logger.Debug()}
 }
 
 // Info opens an info event through the global logger.
 func Info() *Event {
-	return Global().Info()
+	return &Event{Event: Global().Logger.Info()}
 }
 
 // Warn opens a warn event through the global logger.
 func Warn() *Event {
-	return Global().Warn()
+	return &Event{Event: Global().Logger.Warn()}
 }
 
 // Error opens an error event through the global logger.
 func Error() *Event {
-	return Global().Error()
+	return &Event{Event: Global().Logger.Error().Stack()}
 }
 
 // Fatal opens a fatal event through the global logger.
 func Fatal() *Event {
-	return Global().Fatal()
+	return &Event{Event: Global().Logger.Fatal().Stack()}
 }
 
 // WithLevel opens an event at the specified level through the global logger.
 func WithLevel(level zerolog.Level) *Event {
-	return Global().WithLevel(level)
+	event := Global().Logger.WithLevel(level)
+	if level >= zerolog.ErrorLevel {
+		event = event.Stack()
+	}
+	return &Event{Event: event}
 }
