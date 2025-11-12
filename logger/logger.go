@@ -22,6 +22,8 @@ const (
 	errorEventName = "log.error"
 )
 
+const callerSkipFrameCount = 2
+
 // Logger wraps zerolog.Logger with trace metadata injection and resource management.
 type Logger struct {
 	*zerolog.Logger
@@ -42,6 +44,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
 	zerolog.ErrorStackMarshaler = marshalStackTrace
+	zerolog.CallerSkipFrameCount = callerSkipFrameCount
 
 	fanout := newWriterRegistry()
 	for idx, w := range cfg.Writers {
@@ -80,6 +83,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 	base := zerolog.New(multiWriter).
 		With().
 		Timestamp().
+		Caller().
 		Str("service_name", cfg.ServiceName).
 		Logger()
 	base = base.Hook(spanHook{})
@@ -115,35 +119,33 @@ func (l *Logger) With() zerolog.Context {
 
 // Debug opens a debug level event.
 func (l *Logger) Debug() *Event {
-	return &Event{Event: l.Logger.Debug().Caller(1)}
+	return &Event{Event: l.Logger.Debug()}
 }
 
 // Info opens an info level event.
 func (l *Logger) Info() *Event {
-	return &Event{Event: l.Logger.Info().Caller(1)}
+	return &Event{Event: l.Logger.Info()}
 }
 
 // Warn opens a warn level event.
 func (l *Logger) Warn() *Event {
-	return &Event{Event: l.Logger.Warn().Caller(1)}
+	return &Event{Event: l.Logger.Warn()}
 }
 
 // Error opens an error level event.
 func (l *Logger) Error() *Event {
-	return &Event{Event: l.Logger.Error().Stack().Caller(1)}
+	return &Event{Event: l.Logger.Error().Stack()}
 }
 
 // Fatal opens a fatal level event.
 func (l *Logger) Fatal() *Event {
-	return &Event{Event: l.Logger.Fatal().Stack().Caller(1)}
+	return &Event{Event: l.Logger.Fatal().Stack()}
 }
 
 // Err opens an error level event with the given error wrapped with stack trace.
 func (l *Logger) Err(err error) *Event {
-	if _, ok := err.(stackTracer); !ok {
-		err = withStackSkip(err, 1)
-	}
-	return &Event{Event: l.Logger.Error().Err(err).Stack().Caller(1)}
+	err = ensureStack(err, 1)
+	return &Event{Event: l.Logger.Error().Stack().Err(err)}
 }
 
 // WithLevel opens an event at the specified level.
@@ -152,7 +154,17 @@ func (l *Logger) WithLevel(level zerolog.Level) *Event {
 	if level >= zerolog.ErrorLevel {
 		event = event.Stack()
 	}
-	return &Event{Event: event.Caller(1)}
+	return &Event{Event: event}
+}
+
+func ensureStack(err error, skip int) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := err.(stackTracer); ok {
+		return err
+	}
+	return withStackSkip(err, skip+1)
 }
 
 func exportFailureLogger(logger *Logger) func(component, transport string, err error) {

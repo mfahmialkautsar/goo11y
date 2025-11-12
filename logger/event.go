@@ -17,9 +17,7 @@ func (e *Event) Err(err error) *Event {
 	if err == nil {
 		return e
 	}
-	if _, ok := err.(stackTracer); !ok {
-		err = withStackSkip(err, 1)
-	}
+	err = ensureStack(err, 1)
 	e.Event = e.Event.Err(err)
 	return e
 }
@@ -215,9 +213,7 @@ func (e *Event) AnErr(key string, err error) *Event {
 	if err == nil {
 		return e
 	}
-	if _, ok := err.(stackTracer); !ok {
-		err = withStackSkip(err, 1)
-	}
+	err = ensureStack(err, 1)
 	e.Event = e.Event.AnErr(key, err)
 	return e
 }
@@ -226,13 +222,10 @@ func (e *Event) AnErr(key string, err error) *Event {
 func (e *Event) Errs(key string, errs []error) *Event {
 	wrappedErrs := make([]error, len(errs))
 	for i, err := range errs {
-		if err != nil {
-			if _, ok := err.(stackTracer); !ok {
-				wrappedErrs[i] = withStackSkip(err, 1)
-			} else {
-				wrappedErrs[i] = err
-			}
+		if err == nil {
+			continue
 		}
+		wrappedErrs[i] = ensureStack(err, 1)
 	}
 	e.Event = e.Event.Errs(key, wrappedErrs)
 	return e
