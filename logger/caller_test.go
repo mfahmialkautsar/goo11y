@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -170,4 +171,64 @@ func TestGlobalCallerDifferentMethods(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEventCallerSkipRelativeToUserFrames(t *testing.T) {
+	log, buf := newBufferedLogger(t, "caller-skip", "debug")
+
+	_, file, line, _ := runtime.Caller(0)
+	helperCallerSkip(log, 1)
+
+	entry := decodeLogLine(t, buf.Bytes())
+	caller, ok := entry["caller"].(string)
+	if !ok {
+		t.Fatalf("expected caller field, got %T", entry["caller"])
+	}
+
+	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
+	if !strings.HasSuffix(caller, expectedSuffix) {
+		t.Fatalf("caller should end with %s, got %s", expectedSuffix, caller)
+	}
+}
+
+func TestEventCallerSkipPreservesStackTrace(t *testing.T) {
+	log, buf := newBufferedLogger(t, "caller-stack-skip", "debug")
+
+	_, file, line, _ := runtime.Caller(0)
+	helperCallerStack(log, 1, errors.New("boom"))
+
+	entry := decodeLogLine(t, buf.Bytes())
+	caller, ok := entry["caller"].(string)
+	if !ok {
+		t.Fatalf("expected caller field, got %T", entry["caller"])
+	}
+
+	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
+	if !strings.HasSuffix(caller, expectedSuffix) {
+		t.Fatalf("caller should end with %s, got %s", expectedSuffix, caller)
+	}
+
+	stack, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
+	}
+	frames := decodeStackFrames(t, stack)
+	found := false
+	for _, frame := range frames {
+		if strings.HasSuffix(frame.Location, expectedSuffix) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("stack trace should include frame ending with %s", expectedSuffix)
+	}
+}
+
+func helperCallerSkip(log *Logger, skip int) {
+	log.Info().Caller(skip).Msg("helper skip")
+}
+
+func helperCallerStack(log *Logger, skip int, err error) {
+	log.Error().Caller(skip).Err(err).Msg("helper stack")
 }
