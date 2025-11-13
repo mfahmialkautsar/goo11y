@@ -1,28 +1,18 @@
 package logger
 
 import (
-	"bytes"
-	"context"
-	"io"
+	"fmt"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestLoggerCallerPointsToTestCode(t *testing.T) {
-	var buf bytes.Buffer
-	cfg := Config{
-		Enabled:     true,
-		ServiceName: "caller-test",
-		Console:     false,
-		Writers:     []io.Writer{&buf},
-	}
+	log, buf := newBufferedLogger(t, "caller-test", "")
 
-	log, err := New(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	log.Info().Msg("test message") // Line 25 - this is where caller should point
+	_, file, line, _ := runtime.Caller(0)
+	log.Info().Msg("test message")
 
 	entry := decodeLogLine(t, buf.Bytes())
 	caller, ok := entry["caller"].(string)
@@ -30,75 +20,82 @@ func TestLoggerCallerPointsToTestCode(t *testing.T) {
 		t.Fatalf("expected caller field, got %T", entry["caller"])
 	}
 
-	// Caller should point to this test file, line 25, not to logger.go or event.go
-	if !strings.Contains(caller, "caller_test.go:25") {
-		t.Errorf("caller should point to test code line 25, got: %s", caller)
+	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
+	if !strings.HasSuffix(caller, expectedSuffix) {
+		t.Fatalf("caller should end with %s, got %s", expectedSuffix, caller)
 	}
-	if strings.Contains(caller, "logger.go") || strings.Contains(caller, "event.go") {
-		t.Errorf("caller should NOT point to goo11y internal files, got: %s", caller)
+
+	for _, internal := range []string{"event.go", "global.go", "logger.go"} {
+		if strings.Contains(caller, internal) {
+			t.Fatalf("caller should not reference %s: %s", internal, caller)
+		}
 	}
 }
 
 func TestLoggerCallerDifferentMethods(t *testing.T) {
 	tests := []struct {
-		name string
-		fn   func(*Logger) int // returns line number where log was called
+		name  string
+		logFn func(*Logger) (string, int)
 	}{
-		{"Debug", func(log *Logger) int { log.Debug().Msg("debug"); return 48 }},
-		{"Info", func(log *Logger) int { log.Info().Msg("info"); return 49 }},
-		{"Warn", func(log *Logger) int { log.Warn().Msg("warn"); return 50 }},
-		{"Error", func(log *Logger) int { log.Error().Msg("error"); return 51 }},
+		{
+			name: "Debug",
+			logFn: func(l *Logger) (string, int) {
+				_, file, line, _ := runtime.Caller(0)
+				l.Debug().Msg("debug")
+				return file, line + 1
+			},
+		},
+		{
+			name: "Info",
+			logFn: func(l *Logger) (string, int) {
+				_, file, line, _ := runtime.Caller(0)
+				l.Info().Msg("info")
+				return file, line + 1
+			},
+		},
+		{
+			name: "Warn",
+			logFn: func(l *Logger) (string, int) {
+				_, file, line, _ := runtime.Caller(0)
+				l.Warn().Msg("warn")
+				return file, line + 1
+			},
+		},
+		{
+			name: "Error",
+			logFn: func(l *Logger) (string, int) {
+				_, file, line, _ := runtime.Caller(0)
+				l.Error().Msg("error")
+				return file, line + 1
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			cfg := Config{
-				Enabled:     true,
-				ServiceName: "caller-methods",
-				Console:     false,
-				Writers:     []io.Writer{&buf},
-				Level:       "debug",
-			}
+			log, buf := newBufferedLogger(t, "caller-methods", "debug")
 
-			log, err := New(context.Background(), cfg)
-			if err != nil {
-				t.Fatalf("New: %v", err)
-			}
-
-			lineNum := tc.fn(log)
-
+			file, line := tc.logFn(log)
 			entry := decodeLogLine(t, buf.Bytes())
 			caller, ok := entry["caller"].(string)
 			if !ok {
 				t.Fatalf("expected caller field, got %T", entry["caller"])
 			}
 
-			expectedLine := strings.Join([]string{"caller_test.go:", string(rune(lineNum + '0'))}, "")
-			if !strings.Contains(caller, expectedLine) {
-				t.Errorf("%s: expected caller to contain %s, got: %s", tc.name, expectedLine, caller)
+			expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line)
+			if !strings.HasSuffix(caller, expectedSuffix) {
+				t.Fatalf("%s: expected caller suffix %s, got %s", tc.name, expectedSuffix, caller)
 			}
 		})
 	}
 }
 
 func TestGlobalCallerPointsToTestCode(t *testing.T) {
-	var buf bytes.Buffer
-	cfg := Config{
-		Enabled:     true,
-		ServiceName: "global-caller",
-		Console:     false,
-		Writers:     []io.Writer{&buf},
-		Level:       "debug",
-	}
+	log, buf := newBufferedLogger(t, "global-caller", "debug")
+	useGlobalLogger(t, log)
 
-	log, err := New(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	Use(log)
-
-	Info().Msg("global message") // Line 106
+	_, file, line, _ := runtime.Caller(0)
+	Info().Msg("global message")
 
 	entry := decodeLogLine(t, buf.Bytes())
 	caller, ok := entry["caller"].(string)
@@ -106,54 +103,70 @@ func TestGlobalCallerPointsToTestCode(t *testing.T) {
 		t.Fatalf("expected caller field, got %T", entry["caller"])
 	}
 
-	// Caller should point to this test file line 106, not global.go
-	if !strings.Contains(caller, "caller_test.go:106") {
-		t.Errorf("global caller should point to test code line 106, got: %s", caller)
+	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
+	if !strings.HasSuffix(caller, expectedSuffix) {
+		t.Fatalf("global caller should end with %s, got %s", expectedSuffix, caller)
 	}
+
 	if strings.Contains(caller, "global.go") {
-		t.Errorf("global caller should NOT point to global.go, got: %s", caller)
+		t.Fatalf("global caller should not reference global.go: %s", caller)
 	}
 }
 
 func TestGlobalCallerDifferentMethods(t *testing.T) {
 	tests := []struct {
-		name string
-		fn   func() int // returns line number where log was called
+		name  string
+		logFn func() (string, int)
 	}{
-		{"Debug", func() int { Debug().Msg("debug"); return 129 }},
-		{"Info", func() int { Info().Msg("info"); return 130 }},
-		{"Warn", func() int { Warn().Msg("warn"); return 131 }},
-		{"Error", func() int { Error().Msg("error"); return 132 }},
+		{
+			name: "Debug",
+			logFn: func() (string, int) {
+				_, file, line, _ := runtime.Caller(0)
+				Debug().Msg("debug")
+				return file, line + 1
+			},
+		},
+		{
+			name: "Info",
+			logFn: func() (string, int) {
+				_, file, line, _ := runtime.Caller(0)
+				Info().Msg("info")
+				return file, line + 1
+			},
+		},
+		{
+			name: "Warn",
+			logFn: func() (string, int) {
+				_, file, line, _ := runtime.Caller(0)
+				Warn().Msg("warn")
+				return file, line + 1
+			},
+		},
+		{
+			name: "Error",
+			logFn: func() (string, int) {
+				_, file, line, _ := runtime.Caller(0)
+				Error().Msg("error")
+				return file, line + 1
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			cfg := Config{
-				Enabled:     true,
-				ServiceName: "global-methods",
-				Console:     false,
-				Writers:     []io.Writer{&buf},
-				Level:       "debug",
-			}
+			log, buf := newBufferedLogger(t, "global-methods", "debug")
+			useGlobalLogger(t, log)
 
-			log, err := New(context.Background(), cfg)
-			if err != nil {
-				t.Fatalf("New: %v", err)
-			}
-			Use(log)
-
-			lineNum := tc.fn()
-
+			file, line := tc.logFn()
 			entry := decodeLogLine(t, buf.Bytes())
 			caller, ok := entry["caller"].(string)
 			if !ok {
 				t.Fatalf("expected caller field, got %T", entry["caller"])
 			}
 
-			expectedLine := strings.Join([]string{"caller_test.go:", string(rune(lineNum + '0'))}, "")
-			if !strings.Contains(caller, expectedLine) {
-				t.Errorf("global %s: expected caller to contain %s, got: %s", tc.name, expectedLine, caller)
+			expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line)
+			if !strings.HasSuffix(caller, expectedSuffix) {
+				t.Fatalf("global %s: expected caller suffix %s, got %s", tc.name, expectedSuffix, caller)
 			}
 		})
 	}

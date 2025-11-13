@@ -6,11 +6,67 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	pkgerrors "github.com/pkg/errors"
 )
+
+func TestErrorStackTraceStartsAtCaller(t *testing.T) {
+	log, buf := newBufferedLogger(t, "stack-caller", "debug")
+
+	err := fmt.Errorf("boom")
+	_, file, line, _ := runtime.Caller(0)
+	log.Error().Err(err).Msg("stack caller")
+
+	entry := decodeLogLine(t, buf.Bytes())
+	stack, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
+	}
+
+	frames := decodeStackFrames(t, stack)
+	if len(frames) == 0 {
+		t.Fatal("expected non-empty stack trace")
+	}
+
+	first := frames[0]
+	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
+	if !strings.HasSuffix(first.Location, expectedSuffix) {
+		t.Fatalf("expected first stack frame suffix %s, got %s", expectedSuffix, first.Location)
+	}
+}
+
+func TestLoggerErrStackTraceStartsAtCaller(t *testing.T) {
+	log, buf := newBufferedLogger(t, "stack-logger-err", "debug")
+
+	err := fmt.Errorf("failure")
+	_, file, line, _ := runtime.Caller(0)
+	log.Err(err).Msg("logger err stack")
+
+	entry := decodeLogLine(t, buf.Bytes())
+	stack, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
+	}
+
+	frames := decodeStackFrames(t, stack)
+	if len(frames) == 0 {
+		t.Fatal("expected non-empty stack trace")
+	}
+
+	first := frames[0]
+	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
+	if !strings.HasSuffix(first.Location, expectedSuffix) {
+		t.Fatalf("expected first stack frame suffix %s, got %s", expectedSuffix, first.Location)
+	}
+
+	if strings.Contains(first.Function, "(*Logger).Err") {
+		t.Fatalf("stack trace should not start with logger internals, got %s", first.Function)
+	}
+}
 
 func TestStackTraceIdentityCollision(t *testing.T) {
 	var buf bytes.Buffer
