@@ -5,6 +5,7 @@ import (
 
 	"github.com/creasty/defaults"
 	"github.com/go-playground/validator/v10"
+	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/meter"
 	"github.com/mfahmialkautsar/goo11y/profiler"
@@ -53,7 +54,7 @@ func (c *Config) applyDefaults() {
 	_ = defaults.Set(&c.Resource)
 
 	propagateServiceName := func(target *string) {
-		if *target == "" || *target == "unknown-service" {
+		if *target == "" || *target == constant.DefaultServiceName {
 			*target = c.Resource.ServiceName
 		}
 	}

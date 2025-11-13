@@ -2,6 +2,8 @@ package logger
 
 import (
 	"testing"
+
+	"github.com/mfahmialkautsar/goo11y/constant"
 )
 
 func TestConfigApplyDefaults(t *testing.T) {
@@ -16,7 +18,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			expected: Config{
 				Level:       "info",
 				Environment: "development",
-				ServiceName: "unknown-service",
+				ServiceName: constant.DefaultServiceName,
 				Console:     true,
 				OTLP: OTLPConfig{
 					Timeout:  0,

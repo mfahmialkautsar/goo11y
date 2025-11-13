@@ -3,6 +3,7 @@ package goo11y
 import (
 	"testing"
 
+	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/logger"
 )
 
@@ -17,7 +18,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			input: Config{},
 			expected: Config{
 				Resource: ResourceConfig{
-					ServiceName:    "unknown-service",
+					ServiceName:    constant.DefaultServiceName,
 					ServiceVersion: "0.1.0",
 				},
 			},
