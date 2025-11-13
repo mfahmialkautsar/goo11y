@@ -39,6 +39,72 @@ func TestErrorStackTraceStartsAtCaller(t *testing.T) {
 	}
 }
 
+func TestLoggerErrorIncludesStackTrace(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := Config{
+		Enabled:     true,
+		ServiceName: "stack-logger",
+		Environment: "test",
+		Console:     false,
+		Writers:     []io.Writer{&buf},
+	}
+
+	log, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if log == nil {
+		t.Fatal("expected logger instance")
+	}
+
+	boom := nestedOuterError()
+	log.Error().Err(boom).Msg("stacked")
+
+	entry := decodeLogLine(t, buf.Bytes())
+	stack, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
+	}
+	if len(stack) == 0 {
+		t.Fatalf("expected non-empty stack trace")
+	}
+	frames := decodeStackFrames(t, stack)
+	assertStackHasFileSuffix(t, frames, filepath.Join("logger", "logger_test_helpers_test.go"))
+	outer := findStackFrame(t, frames, "nestedOuterError")
+	if !strings.Contains(outer.Location, "logger/logger_test_helpers_test.go:") {
+		t.Fatalf("unexpected outer frame location: %s", outer.Location)
+	}
+	if outer.Function != "github.com/mfahmialkautsar/goo11y/logger.nestedOuterError" {
+		t.Fatalf("unexpected outer frame function: %s", outer.Function)
+	}
+	middle := findStackFrame(t, frames, "nestedMiddleError")
+	if !strings.Contains(middle.Location, "logger/logger_test_helpers_test.go:") {
+		t.Fatalf("unexpected middle frame location: %s", middle.Location)
+	}
+	inner := findStackFrame(t, frames, "nestedInnerError")
+	if !strings.Contains(inner.Location, "logger/logger_test_helpers_test.go:") {
+		t.Fatalf("unexpected inner frame location: %s", inner.Location)
+	}
+	funcs := stackFunctionNames(t, stack)
+	assertStackContains(t, funcs, "nestedInnerError")
+	assertStackContains(t, funcs, "nestedMiddleError")
+	assertStackContains(t, funcs, "nestedOuterError")
+
+	innerIdx := findStackFrameIndex(frames, "nestedInnerError")
+	middleIdx := findStackFrameIndex(frames, "nestedMiddleError")
+	outerIdx := findStackFrameIndex(frames, "nestedOuterError")
+	if innerIdx == -1 || middleIdx == -1 || outerIdx == -1 {
+		t.Fatalf("missing frames in stack: inner=%d middle=%d outer=%d", innerIdx, middleIdx, outerIdx)
+	}
+	if innerIdx >= middleIdx || middleIdx >= outerIdx {
+		t.Errorf("stack order incorrect: inner@%d middle@%d outer@%d (expected inner < middle < outer)", innerIdx, middleIdx, outerIdx)
+	}
+
+	if msg, ok := entry["error"].(string); !ok || !strings.Contains(msg, "nested boom") || !strings.Contains(msg, "outer failed") {
+		t.Fatalf("unexpected error field: %v", entry["error"])
+	}
+}
+
 func TestLoggerErrStackTraceStartsAtCaller(t *testing.T) {
 	log, buf := newBufferedLogger(t, "stack-logger-err", "debug")
 
