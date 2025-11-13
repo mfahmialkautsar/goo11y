@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/meter"
 	"github.com/mfahmialkautsar/goo11y/profiler"
@@ -77,7 +78,7 @@ func TestConfigValidateRequiresServiceName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected validation failure with default service name: %v", err)
 	}
-	if empty.Resource.ServiceName != "unknown-service" {
+	if empty.Resource.ServiceName != constant.DefaultServiceName {
 		t.Fatalf("expected default service name, got %q", empty.Resource.ServiceName)
 	}
 

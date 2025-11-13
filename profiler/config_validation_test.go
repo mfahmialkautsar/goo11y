@@ -2,6 +2,8 @@ package profiler
 
 import (
 	"testing"
+
+	"github.com/mfahmialkautsar/goo11y/constant"
 )
 
 func TestConfigApplyDefaults(t *testing.T) {
@@ -14,7 +16,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			name:  "empty config",
 			input: Config{},
 			expected: Config{
-				ServiceName:          "unknown-service",
+				ServiceName:          constant.DefaultServiceName,
 				TenantID:             "anonymous",
 				MutexProfileFraction: 5,
 				BlockProfileRate:     5,
@@ -29,7 +31,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			expected: Config{
 				Enabled:              true,
 				ServerURL:            "http://localhost:4040",
-				ServiceName:          "unknown-service",
+				ServiceName:          constant.DefaultServiceName,
 				TenantID:             "anonymous",
 				MutexProfileFraction: 5,
 				BlockProfileRate:     5,

@@ -3,6 +3,8 @@ package tracer
 import (
 	"testing"
 	"time"
+
+	"github.com/mfahmialkautsar/goo11y/constant"
 )
 
 func TestConfigApplyDefaults(t *testing.T) {
@@ -16,7 +18,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			input: Config{},
 			expected: Config{
 				Exporter:      "http",
-				ServiceName:   "unknown-service",
+				ServiceName:   constant.DefaultServiceName,
 				SampleRatio:   1.0,
 				ExportTimeout: 10 * time.Second,
 			},
@@ -31,7 +33,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 				Enabled:       true,
 				Endpoint:      "http://localhost:4318",
 				Exporter:      "http",
-				ServiceName:   "unknown-service",
+				ServiceName:   constant.DefaultServiceName,
 				SampleRatio:   1.0,
 				ExportTimeout: 10 * time.Second,
 			},
