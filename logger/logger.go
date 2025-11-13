@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"unsafe"
@@ -22,6 +21,8 @@ const (
 	warnEventName  = "log.warn"
 	errorEventName = "log.error"
 )
+
+const callerSkipFrameCount = 2
 
 // Logger wraps zerolog.Logger with trace metadata injection and resource management.
 type Logger struct {
@@ -43,6 +44,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
 	zerolog.ErrorStackMarshaler = marshalStackTrace
+	zerolog.CallerSkipFrameCount = callerSkipFrameCount
 
 	fanout := newWriterRegistry()
 	for idx, w := range cfg.Writers {
@@ -81,6 +83,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 	base := zerolog.New(multiWriter).
 		With().
 		Timestamp().
+		Caller().
 		Str("service_name", cfg.ServiceName).
 		Logger()
 	base = base.Hook(spanHook{})
@@ -116,47 +119,41 @@ func (l *Logger) With() zerolog.Context {
 
 // Debug opens a debug level event.
 func (l *Logger) Debug() *Event {
-	return wrapEvent(l.Logger.Debug(), false)
+	return &Event{Event: l.Logger.Debug()}
 }
 
 // Info opens an info level event.
 func (l *Logger) Info() *Event {
-	return wrapEvent(l.Logger.Info(), false)
+	return &Event{Event: l.Logger.Info()}
 }
 
 // Warn opens a warn level event.
 func (l *Logger) Warn() *Event {
-	return wrapEvent(l.Logger.Warn(), false)
+	return &Event{Event: l.Logger.Warn()}
 }
 
 // Error opens an error level event.
 func (l *Logger) Error() *Event {
-	return wrapEvent(l.Logger.Error(), true)
+	return &Event{Event: l.Logger.Error().Stack()}
 }
 
 // Fatal opens a fatal level event.
 func (l *Logger) Fatal() *Event {
-	return wrapEvent(l.Logger.Fatal(), true)
+	return &Event{Event: l.Logger.Fatal().Stack()}
 }
 
 // Err opens an error level event with the given error wrapped with stack trace.
 func (l *Logger) Err(err error) *Event {
 	err = ensureStack(err, 1)
-	base := l.Logger.Error().Stack().Err(err)
-	return wrapEvent(base, false)
+	return &Event{Event: l.Logger.Error().Stack().Err(err)}
 }
 
 // WithLevel opens an event at the specified level.
 func (l *Logger) WithLevel(level zerolog.Level) *Event {
-	includeStack := level >= zerolog.ErrorLevel
-	return wrapEvent(l.Logger.WithLevel(level), includeStack)
-}
-
-func wrapEvent(event *zerolog.Event, includeStack bool) *Event {
-	if includeStack {
+	event := l.Logger.WithLevel(level)
+	if level >= zerolog.ErrorLevel {
 		event = event.Stack()
 	}
-	event = addCallerWithSkip(event, 0)
 	return &Event{Event: event}
 }
 
@@ -167,104 +164,7 @@ func ensureStack(err error, skip int) error {
 	if _, ok := err.(stackTracer); ok {
 		return err
 	}
-	return withStackSkip(err, skip)
-}
-
-func addCallerWithSkip(event *zerolog.Event, extraSkip int) *zerolog.Event {
-	frame, ok := captureCallerFrame(extraSkip)
-	if !ok {
-		return event
-	}
-	caller := zerolog.CallerMarshalFunc(frame.PC, frame.File, frame.Line)
-	event = event.Str(zerolog.CallerFieldName, caller)
-	return event
-}
-
-func captureCallerFrame(extraSkip int) (runtime.Frame, bool) {
-	const depth = 32
-	var pcs [depth]uintptr
-	// Skip runtime.Callers, captureCallerFrame, and addCallerWithSkip frames.
-	n := runtime.Callers(3, pcs[:])
-	if n == 0 {
-		return runtime.Frame{}, false
-	}
-	frames := runtime.CallersFrames(pcs[:n])
-	skipped := 0
-	for {
-		frame, more := frames.Next()
-		if !isInstrumentationFrame(frame) {
-			if skipped < extraSkip {
-				skipped++
-			} else {
-				return frame, true
-			}
-		}
-		if !more {
-			break
-		}
-	}
-	return runtime.Frame{}, false
-}
-
-func trimLeadingInstrumentationPCs(pcs []uintptr) []uintptr {
-	frames := runtime.CallersFrames(pcs)
-	trimmed := make([]uintptr, 0, len(pcs))
-	trimming := true
-	index := 0
-	for {
-		frame, more := frames.Next()
-		if !trimming || !isInstrumentationFrame(frame) {
-			trimming = false
-			trimmed = append(trimmed, pcs[index])
-		}
-		index++
-		if !more {
-			break
-		}
-	}
-	if len(trimmed) == 0 {
-		trimmed = append(trimmed, pcs...)
-	}
-	return trimmed
-}
-
-func trimLeadingInstrumentationFrames(frames []runtime.Frame) []runtime.Frame {
-	start := 0
-	for start < len(frames) {
-		if !isInstrumentationFrame(frames[start]) {
-			break
-		}
-		start++
-	}
-	if start == 0 || start >= len(frames) {
-		return frames
-	}
-	return frames[start:]
-}
-
-var instrumentationFiles = map[string]struct{}{
-	"event.go":  {},
-	"global.go": {},
-	"logger.go": {},
-}
-
-func isInstrumentationFrame(frame runtime.Frame) bool {
-	if frame.Function == "" {
-		return true
-	}
-	if strings.HasPrefix(frame.Function, "runtime.") || strings.HasPrefix(frame.Function, "testing.") {
-		return true
-	}
-	if strings.HasPrefix(frame.Function, "github.com/rs/zerolog.") {
-		return true
-	}
-	if strings.HasPrefix(frame.Function, "github.com/mfahmialkautsar/goo11y/logger.") {
-		base := filepath.Base(frame.File)
-		if _, ok := instrumentationFiles[base]; ok && !strings.HasSuffix(frame.File, "_test.go") {
-			return true
-		}
-	}
-	return false
+	return withStackSkip(err, skip+1)
 }
 
 func exportFailureLogger(logger *Logger) func(component, transport string, err error) {
@@ -342,9 +242,8 @@ func withStackSkip(err error, skip int) error {
 	if n == 0 {
 		return &stackError{err: err, stack: nil}
 	}
-	trimmed := trimLeadingInstrumentationPCs(pcs[:n])
-	stack := make([]uintptr, len(trimmed))
-	copy(stack, trimmed)
+	stack := make([]uintptr, n)
+	copy(stack, pcs[:n])
 	return &stackError{err: err, stack: stack}
 }
 
@@ -416,13 +315,8 @@ func marshalStackTrace(err error) any {
 		return nil
 	}
 
-	trimmed := trimLeadingInstrumentationFrames(collected)
-	if len(trimmed) == 0 {
-		return nil
-	}
-
-	result := make([]map[string]any, 0, len(trimmed))
-	for _, frame := range trimmed {
+	result := make([]map[string]any, 0, len(collected))
+	for _, frame := range collected {
 		entry := map[string]any{"location": frameLocation(frame)}
 		if frame.Function != "" {
 			entry["function"] = frame.Function

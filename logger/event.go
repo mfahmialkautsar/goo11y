@@ -263,11 +263,11 @@ func (e *Event) RawJSON(key string, b []byte) *Event {
 
 // Caller adds the file:line of the caller.
 func (e *Event) Caller(skip ...int) *Event {
-	extra := 0
+	s := 1
 	if len(skip) > 0 {
-		extra = skip[0]
+		s = skip[0] + 1
 	}
-	e.Event = addCallerWithSkip(e.Event, extra)
+	e.Event = e.Event.Caller(s)
 	return e
 }
 
