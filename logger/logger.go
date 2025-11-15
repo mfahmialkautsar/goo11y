@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
@@ -23,6 +25,11 @@ const (
 )
 
 const callerSkipFrameCount = 2
+
+var (
+	processRoot     string
+	processRootOnce sync.Once
+)
 
 // Logger wraps zerolog.Logger with trace metadata injection and resource management.
 type Logger struct {
@@ -45,6 +52,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
 	zerolog.ErrorStackMarshaler = marshalStackTrace
 	zerolog.CallerSkipFrameCount = callerSkipFrameCount
+	zerolog.CallerMarshalFunc = callerLocationFormatter
 
 	fanout := newWriterRegistry()
 	for idx, w := range cfg.Writers {
@@ -58,10 +66,12 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 		fanout.add("file", fileWriter)
 	}
 	if cfg.Console {
-		fanout.add("console", zerolog.ConsoleWriter{
+		writer := zerolog.ConsoleWriter{
 			Out:        os.Stdout,
 			TimeFormat: defaultConsoleTimeFormat,
-		})
+		}
+		writer.FormatCaller = absoluteConsoleCallerFormatter(writer.NoColor)
+		fanout.add("console", writer)
 	}
 	if cfg.OTLP.Enabled {
 		otlpWriter, err := newOTLPWriter(ctx, cfg.OTLP, cfg.ServiceName, cfg.Environment)
@@ -247,14 +257,23 @@ func withStackSkip(err error, skip int) error {
 	return &stackError{err: err, stack: stack}
 }
 
+func callerLocationFormatter(_ uintptr, file string, line int) string {
+	return formatLocation(file, line)
+}
+
 func frameLocation(frame runtime.Frame) string {
-	if frame.File == "" {
-		return fmt.Sprintf(":%d", frame.Line)
+	return formatLocation(frame.File, frame.Line)
+}
+
+func formatLocation(file string, line int) string {
+	filePath := resolveFrameFile(file)
+	if filePath == "" {
+		return fmt.Sprintf(":%d", line)
 	}
-	if frame.Line <= 0 {
-		return frame.File
+	if line <= 0 {
+		return filePath
 	}
-	return fmt.Sprintf("%s:%d", frame.File, frame.Line)
+	return fmt.Sprintf("%s:%d", filePath, line)
 }
 
 func marshalStackTrace(err error) any {
@@ -329,3 +348,70 @@ func marshalStackTrace(err error) any {
 func errorPointer(err error) uintptr {
 	return (*[2]uintptr)(unsafe.Pointer(&err))[1]
 }
+
+func captureProcessRoot() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(dir)
+}
+
+func resolveFrameFile(path string) string {
+	cleanPath := filepath.Clean(path)
+	if cleanPath == "." {
+		cleanPath = ""
+	}
+	if cleanPath == "" || filepath.IsAbs(cleanPath) {
+		return cleanPath
+	}
+	root := processRootDir()
+	if root != "" {
+		return filepath.Clean(filepath.Join(root, cleanPath))
+	}
+	abs, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return cleanPath
+	}
+	return filepath.Clean(abs)
+}
+
+func processRootDir() string {
+	processRootOnce.Do(func() {
+		processRoot = captureProcessRoot()
+	})
+	return processRoot
+}
+
+func absoluteConsoleCallerFormatter(noColor bool) zerolog.Formatter {
+	return func(value interface{}) string {
+		caller, _ := value.(string)
+		if caller == "" {
+			return ""
+		}
+		formatted := caller + " >"
+		if noColor {
+			return formatted
+		}
+		return ansiColorize(caller, ansiBold) + ansiColorize(" >", ansiCyan)
+	}
+}
+
+func ansiColorize(input string, code ansiColorCode) string {
+	if input == "" {
+		return ""
+	}
+	if code == ansiNone {
+		return input
+	}
+	return string(code) + input + string(ansiReset)
+}
+
+type ansiColorCode string
+
+const (
+	ansiNone  ansiColorCode = ""
+	ansiReset ansiColorCode = "\x1b[0m"
+	ansiBold  ansiColorCode = "\x1b[1m"
+	ansiCyan  ansiColorCode = "\x1b[36m"
+)
