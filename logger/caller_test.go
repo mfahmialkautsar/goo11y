@@ -2,7 +2,6 @@ package logger
 
 import (
 	"errors"
-	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,10 +20,7 @@ func TestLoggerCallerPointsToTestCode(t *testing.T) {
 		t.Fatalf("expected caller field, got %T", entry["caller"])
 	}
 
-	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
-	if !strings.HasSuffix(caller, expectedSuffix) {
-		t.Fatalf("caller should end with %s, got %s", expectedSuffix, caller)
-	}
+	assertCallerLocation(t, caller, file, line+1)
 
 	for _, internal := range []string{"event.go", "global.go", "logger.go"} {
 		if strings.Contains(caller, internal) {
@@ -83,10 +79,7 @@ func TestLoggerCallerDifferentMethods(t *testing.T) {
 				t.Fatalf("expected caller field, got %T", entry["caller"])
 			}
 
-			expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line)
-			if !strings.HasSuffix(caller, expectedSuffix) {
-				t.Fatalf("%s: expected caller suffix %s, got %s", tc.name, expectedSuffix, caller)
-			}
+			assertCallerLocation(t, caller, file, line)
 		})
 	}
 }
@@ -104,10 +97,7 @@ func TestGlobalCallerPointsToTestCode(t *testing.T) {
 		t.Fatalf("expected caller field, got %T", entry["caller"])
 	}
 
-	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
-	if !strings.HasSuffix(caller, expectedSuffix) {
-		t.Fatalf("global caller should end with %s, got %s", expectedSuffix, caller)
-	}
+	assertCallerLocation(t, caller, file, line+1)
 
 	if strings.Contains(caller, "global.go") {
 		t.Fatalf("global caller should not reference global.go: %s", caller)
@@ -165,10 +155,7 @@ func TestGlobalCallerDifferentMethods(t *testing.T) {
 				t.Fatalf("expected caller field, got %T", entry["caller"])
 			}
 
-			expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line)
-			if !strings.HasSuffix(caller, expectedSuffix) {
-				t.Fatalf("global %s: expected caller suffix %s, got %s", tc.name, expectedSuffix, caller)
-			}
+			assertCallerLocation(t, caller, file, line)
 		})
 	}
 }
@@ -185,10 +172,7 @@ func TestEventCallerSkipRelativeToUserFrames(t *testing.T) {
 		t.Fatalf("expected caller field, got %T", entry["caller"])
 	}
 
-	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
-	if !strings.HasSuffix(caller, expectedSuffix) {
-		t.Fatalf("caller should end with %s, got %s", expectedSuffix, caller)
-	}
+	assertCallerLocation(t, caller, file, line+1)
 }
 
 func TestEventCallerSkipPreservesStackTrace(t *testing.T) {
@@ -203,26 +187,38 @@ func TestEventCallerSkipPreservesStackTrace(t *testing.T) {
 		t.Fatalf("expected caller field, got %T", entry["caller"])
 	}
 
-	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
-	if !strings.HasSuffix(caller, expectedSuffix) {
-		t.Fatalf("caller should end with %s, got %s", expectedSuffix, caller)
-	}
+	assertCallerLocation(t, caller, file, line+1)
 
 	stack, ok := entry["stack"].([]any)
 	if !ok {
 		t.Fatalf("expected stack field, got %T", entry["stack"])
 	}
 	frames := decodeStackFrames(t, stack)
-	found := false
-	for _, frame := range frames {
-		if strings.HasSuffix(frame.Location, expectedSuffix) {
-			found = true
-			break
-		}
+	assertStackContainsLocation(t, frames, file, line+1)
+}
+
+func TestLoggerErrCallerRespectsSkipStacking(t *testing.T) {
+	log, buf := newBufferedLogger(t, "caller-err-stack", "debug")
+
+	_, file, line, _ := runtime.Caller(0)
+	helperCallerErr(log, 1, errors.New("err boom"))
+
+	entry := decodeLogLine(t, buf.Bytes())
+	caller, ok := entry["caller"].(string)
+	if !ok {
+		t.Fatalf("expected caller field, got %T", entry["caller"])
 	}
-	if !found {
-		t.Fatalf("stack trace should include frame ending with %s", expectedSuffix)
+	assertCallerLocation(t, caller, file, line+1)
+
+	stackAny, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
 	}
+	frames := decodeStackFrames(t, stackAny)
+	if len(frames) == 0 {
+		t.Fatal("expected non-empty stack trace")
+	}
+	assertStackContainsLocation(t, frames, file, line+1)
 }
 
 func helperCallerSkip(log *Logger, skip int) {
@@ -231,4 +227,33 @@ func helperCallerSkip(log *Logger, skip int) {
 
 func helperCallerStack(log *Logger, skip int, err error) {
 	log.Error().Caller(skip).Err(err).Msg("helper stack")
+}
+
+func helperCallerErr(log *Logger, skip int, err error) {
+	log.Err(err).Caller(skip).Msg("helper err")
+}
+
+func assertCallerLocation(t *testing.T, caller string, file string, line int) {
+	t.Helper()
+	gotFile, gotLine, _, ok := parseStackLocation(caller)
+	if !ok {
+		t.Fatalf("invalid caller format: %s", caller)
+	}
+	if filepath.Clean(gotFile) != filepath.Clean(file) {
+		t.Fatalf("caller file mismatch: want %s got %s", file, gotFile)
+	}
+	if gotLine != line {
+		t.Fatalf("caller line mismatch: want %d got %d", line, gotLine)
+	}
+}
+
+func assertStackContainsLocation(t *testing.T, frames []logStackFrame, file string, line int) {
+	t.Helper()
+	wantFile := filepath.Clean(file)
+	for _, frame := range frames {
+		if filepath.Clean(frame.File) == wantFile && frame.Line == line {
+			return
+		}
+	}
+	t.Fatalf("stack missing frame %s:%d in %v", file, line, frames)
 }
