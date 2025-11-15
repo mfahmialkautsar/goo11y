@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -89,10 +91,11 @@ func decodeStackFrames(t *testing.T, stack []any) []logStackFrame {
 	return frames
 }
 
-func assertStackHasFileSuffix(t *testing.T, frames []logStackFrame, suffix string) {
+func assertStackHasFilePath(t *testing.T, frames []logStackFrame, file string) {
 	t.Helper()
+	want := filepath.Clean(file)
 	for _, frame := range frames {
-		if !strings.HasSuffix(frame.File, suffix) {
+		if filepath.Clean(frame.File) != want {
 			continue
 		}
 		if !filepath.IsAbs(frame.File) {
@@ -106,7 +109,21 @@ func assertStackHasFileSuffix(t *testing.T, frames []logStackFrame, suffix strin
 		}
 		return
 	}
-	t.Fatalf("stack missing file suffix %s in %v", suffix, frames)
+	t.Fatalf("stack missing file %s in %v", want, frames)
+}
+
+func functionFile(fn interface{}) string {
+	value := reflect.ValueOf(fn)
+	if value.Kind() != reflect.Func {
+		panic("functionFile expects a function")
+	}
+	pc := value.Pointer()
+	runtimeFn := runtime.FuncForPC(pc)
+	if runtimeFn == nil {
+		panic("unable to resolve function info")
+	}
+	file, _ := runtimeFn.FileLine(pc)
+	return filepath.Clean(file)
 }
 
 func stackFunctionNames(t *testing.T, stack []any) []string {

@@ -33,9 +33,11 @@ func TestErrorStackTraceStartsAtCaller(t *testing.T) {
 	}
 
 	first := frames[0]
-	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
-	if !strings.HasSuffix(first.Location, expectedSuffix) {
-		t.Fatalf("expected first stack frame suffix %s, got %s", expectedSuffix, first.Location)
+	if filepath.Clean(first.File) != filepath.Clean(file) {
+		t.Fatalf("expected first stack frame file %s, got %s", file, first.File)
+	}
+	if first.Line != line+1 {
+		t.Fatalf("expected first stack frame line %d, got %d", line+1, first.Line)
 	}
 }
 
@@ -69,21 +71,22 @@ func TestLoggerErrorIncludesStackTrace(t *testing.T) {
 		t.Fatalf("expected non-empty stack trace")
 	}
 	frames := decodeStackFrames(t, stack)
-	assertStackHasFileSuffix(t, frames, filepath.Join("logger", "logger_test_helpers_test.go"))
+	helperFile := functionFile(nestedOuterError)
+	assertStackHasFilePath(t, frames, helperFile)
 	outer := findStackFrame(t, frames, "nestedOuterError")
-	if !strings.Contains(outer.Location, "logger/logger_test_helpers_test.go:") {
-		t.Fatalf("unexpected outer frame location: %s", outer.Location)
+	if filepath.Clean(outer.File) != helperFile {
+		t.Fatalf("unexpected outer frame file: %s", outer.File)
 	}
 	if outer.Function != "github.com/mfahmialkautsar/goo11y/logger.nestedOuterError" {
 		t.Fatalf("unexpected outer frame function: %s", outer.Function)
 	}
 	middle := findStackFrame(t, frames, "nestedMiddleError")
-	if !strings.Contains(middle.Location, "logger/logger_test_helpers_test.go:") {
-		t.Fatalf("unexpected middle frame location: %s", middle.Location)
+	if filepath.Clean(middle.File) != helperFile {
+		t.Fatalf("unexpected middle frame file: %s", middle.File)
 	}
 	inner := findStackFrame(t, frames, "nestedInnerError")
-	if !strings.Contains(inner.Location, "logger/logger_test_helpers_test.go:") {
-		t.Fatalf("unexpected inner frame location: %s", inner.Location)
+	if filepath.Clean(inner.File) != helperFile {
+		t.Fatalf("unexpected inner frame file: %s", inner.File)
 	}
 	funcs := stackFunctionNames(t, stack)
 	assertStackContains(t, funcs, "nestedInnerError")
@@ -124,9 +127,11 @@ func TestLoggerErrStackTraceStartsAtCaller(t *testing.T) {
 	}
 
 	first := frames[0]
-	expectedSuffix := fmt.Sprintf("%s:%d", filepath.Base(file), line+1)
-	if !strings.HasSuffix(first.Location, expectedSuffix) {
-		t.Fatalf("expected first stack frame suffix %s, got %s", expectedSuffix, first.Location)
+	if filepath.Clean(first.File) != filepath.Clean(file) {
+		t.Fatalf("expected first stack frame file %s, got %s", file, first.File)
+	}
+	if first.Line != line+1 {
+		t.Fatalf("expected first stack frame line %d, got %d", line+1, first.Line)
 	}
 
 	if strings.Contains(first.Function, "(*Logger).Err") {
