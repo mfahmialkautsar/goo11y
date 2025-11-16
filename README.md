@@ -116,4 +116,4 @@ Each component struct mirrors the upstream OpenTelemetry options but adds conven
 - `make test`, `make test-unit`, `make test-integration` — convenience targets for local workflows.
 
 ## License
-GNU GPL v3.0 — see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE).
