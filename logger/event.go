@@ -2,6 +2,8 @@ package logger
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -19,6 +21,35 @@ func (e *Event) Err(err error) *Event {
 	}
 	err = ensureStack(err, 1)
 	e.Event = e.Event.Err(err)
+	return e
+}
+
+// AnErr adds an error field with a custom key.
+func (e *Event) AnErr(key string, err error) *Event {
+	if err == nil {
+		return e
+	}
+	err = ensureStack(err, 1)
+	e.Event = e.Event.AnErr(key, err)
+	return e
+}
+
+// Errs adds a slice of errors field.
+func (e *Event) Errs(key string, errs []error) *Event {
+	wrappedErrs := make([]error, len(errs))
+	for i, err := range errs {
+		if err == nil {
+			continue
+		}
+		wrappedErrs[i] = ensureStack(err, 1)
+	}
+	e.Event = e.Event.Errs(key, wrappedErrs)
+	return e
+}
+
+// Caller adds the file:line of the caller.
+func (e *Event) Caller(skip ...int) *Event {
+	e.Event = e.Event.Caller(skip...)
 	return e
 }
 
@@ -208,29 +239,6 @@ func (e *Event) Hex(key string, val []byte) *Event {
 	return e
 }
 
-// AnErr adds an error field with a custom key.
-func (e *Event) AnErr(key string, err error) *Event {
-	if err == nil {
-		return e
-	}
-	err = ensureStack(err, 1)
-	e.Event = e.Event.AnErr(key, err)
-	return e
-}
-
-// Errs adds a slice of errors field.
-func (e *Event) Errs(key string, errs []error) *Event {
-	wrappedErrs := make([]error, len(errs))
-	for i, err := range errs {
-		if err == nil {
-			continue
-		}
-		wrappedErrs[i] = ensureStack(err, 1)
-	}
-	e.Event = e.Event.Errs(key, wrappedErrs)
-	return e
-}
-
 // Object marshals an object.
 func (e *Event) Object(key string, obj zerolog.LogObjectMarshaler) *Event {
 	e.Event = e.Event.Object(key, obj)
@@ -261,12 +269,6 @@ func (e *Event) RawJSON(key string, b []byte) *Event {
 	return e
 }
 
-// Caller adds the file:line of the caller.
-func (e *Event) Caller(skip ...int) *Event {
-	e.Event = e.Event.Caller(skip...)
-	return e
-}
-
 // Stack enables stack trace printing.
 func (e *Event) Stack() *Event {
 	e.Event = e.Event.Stack()
@@ -281,5 +283,65 @@ func (e *Event) Enabled() bool {
 // Discard disables the event.
 func (e *Event) Discard() *Event {
 	e.Event = e.Event.Discard()
+	return e
+}
+
+// Fields is a helper to add multiple fields from a map or slice.
+func (e *Event) Fields(fields interface{}) *Event {
+	e.Event = e.Event.Fields(fields)
+	return e
+}
+
+// Func allows an anonymous func to run only if the event is enabled.
+func (e *Event) Func(f func(e *zerolog.Event)) *Event {
+	e.Event = e.Event.Func(f)
+	return e
+}
+
+// Stringer adds the field key with val.String() (or null if val is nil).
+func (e *Event) Stringer(key string, val fmt.Stringer) *Event {
+	e.Event = e.Event.Stringer(key, val)
+	return e
+}
+
+// Stringers adds the field key with vals where each val is val.String().
+func (e *Event) Stringers(key string, vals []fmt.Stringer) *Event {
+	e.Event = e.Event.Stringers(key, vals)
+	return e
+}
+
+// Type adds the field key with val's type using reflection.
+func (e *Event) Type(key string, val interface{}) *Event {
+	e.Event = e.Event.Type(key, val)
+	return e
+}
+
+// CallerSkipFrame instructs future Caller calls to skip the specified number of frames.
+func (e *Event) CallerSkipFrame(skip int) *Event {
+	e.Event = e.Event.CallerSkipFrame(skip)
+	return e
+}
+
+// RawCBOR adds already encoded CBOR to the log line under key.
+func (e *Event) RawCBOR(key string, b []byte) *Event {
+	e.Event = e.Event.RawCBOR(key, b)
+	return e
+}
+
+// IPAddr adds IPv4 or IPv6 Address to the event.
+func (e *Event) IPAddr(key string, ip net.IP) *Event {
+	e.Event = e.Event.IPAddr(key, ip)
+	return e
+}
+
+// IPPrefix adds IPv4 or IPv6 Prefix (address and mask) to the event.
+func (e *Event) IPPrefix(key string, pfx net.IPNet) *Event {
+	e.Event = e.Event.IPPrefix(key, pfx)
+	return e
+}
+
+// MACAddr adds MAC address to the event.
+func (e *Event) MACAddr(key string, ha net.HardwareAddr) *Event {
+	e.Event = e.Event.MACAddr(key, ha)
 	return e
 }
