@@ -3,9 +3,6 @@ name: Publish
 on:
   workflow_dispatch:
     inputs:
-      confirm:
-        description: 'Type "confirm" to approve publishing.'
-        required: true
       target_sha:
         description: 'Commit SHA to publish (defaults to the workflow commit).'
         required: false
@@ -13,24 +10,25 @@ on:
         description: 'Semantic version tag to publish (e.g., v1.2.3).'
         required: true
 
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   actions: read
   contents: write
 
 env:
   GOFLAGS: -buildvcs=false
+  VERSION: ${{ github.event.inputs.version }}
 
 jobs:
-  publish:
-    if: ${{ inputs.confirm == 'confirm' }}
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.target_sha || github.sha }}
-          fetch-depth: 0
 
       - name: Validate dependent workflows
         uses: actions/github-script@v8
@@ -70,7 +68,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version='${{ inputs.version }}'
+          version="${VERSION}"
           if [ -z "$version" ]; then
             echo "version input is required" >&2
             exit 1
@@ -82,8 +80,6 @@ jobs:
 
       - name: Ensure tag does not exist
         shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           if git rev-parse "$VERSION" >/dev/null 2>&1; then
@@ -95,21 +91,28 @@ jobs:
             exit 1
           fi
 
+  publish:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Configure git user
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Create tag
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           git tag -a "$VERSION" -m "Release $VERSION"
 
       - name: Push tag
         env:
-          VERSION: ${{ inputs.version }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -122,8 +125,6 @@ jobs:
           cache: true
 
       - name: Publish module to Go proxy
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           go version
