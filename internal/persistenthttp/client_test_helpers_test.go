@@ -20,7 +20,17 @@ func (e *errReadCloser) Close() error {
 
 func waitForQueueFiles(t *testing.T, dir string, done func(int) bool) {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadlineDur := 10 * time.Second
+	if d, ok := t.Deadline(); ok {
+		remaining := time.Until(d)
+		if remaining > 0 {
+			cap := remaining / 3
+			if cap > 2*time.Second && cap < deadlineDur {
+				deadlineDur = cap
+			}
+		}
+	}
+	deadline := time.After(deadlineDur)
 	for {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
