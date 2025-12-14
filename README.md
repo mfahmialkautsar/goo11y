@@ -58,7 +58,7 @@ func main() {
             OTLP: logger.OTLPConfig{
                 Enabled:  true,
                 Endpoint: "telemetry.example.com:4318",
-                Exporter: "http",
+                Protocol: "http",
             },
         },
         Tracer: tracer.Config{
