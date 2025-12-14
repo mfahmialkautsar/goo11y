@@ -78,7 +78,7 @@ func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 		manager, err := persistentgrpc.NewManager(
 			cfg.QueueDir,
 			"meter",
-			cfg.Exporter,
+			cfg.Protocol,
 			"/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
 			func() proto.Message { return new(colmetric.ExportMetricsServiceRequest) },
 			func() proto.Message { return new(colmetric.ExportMetricsServiceResponse) },
@@ -99,7 +99,7 @@ func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 		}
 		return nil, err
 	}
-	return wrapMetricExporter(exporter, "meter", cfg.Exporter, spoolManager, nil), nil
+	return wrapMetricExporter(exporter, "meter", cfg.Protocol, spoolManager, nil), nil
 }
 
 type metricExporterWithLogging struct {

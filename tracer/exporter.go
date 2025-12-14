@@ -77,7 +77,7 @@ func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 		manager, err := persistentgrpc.NewManager(
 			cfg.QueueDir,
 			"tracer",
-			cfg.Exporter,
+			cfg.Protocol,
 			"/opentelemetry.proto.collector.trace.v1.TraceService/Export",
 			func() proto.Message { return new(coltrace.ExportTraceServiceRequest) },
 			func() proto.Message { return new(coltrace.ExportTraceServiceResponse) },
@@ -98,48 +98,48 @@ func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 		}
 		return nil, err
 	}
-	return wrapSpanExporter(exporter, "tracer", cfg.Exporter, spoolManager, nil), nil
+	return wrapSpanExporter(exporter, "tracer", cfg.Protocol, spoolManager, nil), nil
 }
 
 type spanExporterWithLogging struct {
-	sdktrace.SpanExporter
+	exporter   sdktrace.SpanExporter
 	component  string
-	transport  string
+	protocol   string
 	spool      *persistentgrpc.Manager
 	httpClient *persistenthttp.Client
 }
 
-func wrapSpanExporter(exp sdktrace.SpanExporter, component, transport string, spool *persistentgrpc.Manager, httpClient *persistenthttp.Client) sdktrace.SpanExporter {
-	if exp == nil {
+func wrapSpanExporter(exporter sdktrace.SpanExporter, component, protocol string, spool *persistentgrpc.Manager, httpClient *persistenthttp.Client) sdktrace.SpanExporter {
+	if exporter == nil {
 		if spool != nil {
 			_ = spool.Stop(context.Background())
 		}
 		if httpClient != nil {
 			_ = httpClient.Close()
 		}
-		return exp
+		return exporter
 	}
 	return &spanExporterWithLogging{
-		SpanExporter: exp,
-		component:    component,
-		transport:    transport,
-		spool:        spool,
-		httpClient:   httpClient,
+		exporter:   exporter,
+		component:  component,
+		protocol:   protocol,
+		spool:      spool,
+		httpClient: httpClient,
 	}
 }
 
 func (s *spanExporterWithLogging) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
-	err := s.SpanExporter.ExportSpans(ctx, spans)
-	if err != nil {
-		otlputil.LogExportFailure(s.component, s.transport, err)
+	if err := s.exporter.ExportSpans(ctx, spans); err != nil {
+		otlputil.LogExportFailure(s.component, s.protocol, err)
+		return err
 	}
-	return err
+	return nil
 }
 
 func (s *spanExporterWithLogging) Shutdown(ctx context.Context) error {
-	err := s.SpanExporter.Shutdown(ctx)
+	err := s.exporter.Shutdown(ctx)
 	if err != nil {
-		otlputil.LogExportFailure(s.component, s.transport, err)
+		otlputil.LogExportFailure(s.component, s.protocol, err)
 	}
 	if s.spool != nil {
 		if stopErr := s.spool.Stop(ctx); stopErr != nil && err == nil {

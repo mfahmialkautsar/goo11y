@@ -29,7 +29,8 @@ import (
 const loggerInstrumentation = "github.com/mfahmialkautsar/goo11y/logger"
 
 type otlpWriter struct {
-	logger otelLog.Logger
+	logger   otelLog.Logger
+	provider *log.LoggerProvider
 }
 
 func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment string) (*otlpWriter, error) {
@@ -37,7 +38,7 @@ func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment
 	if err != nil {
 		return nil, err
 	}
-	exporter = wrapLogExporter(exporter, "logger", cfg.Exporter, spool, httpClient)
+	exporter = wrapLogExporter(exporter, "logger", cfg.Protocol, spool, httpClient)
 
 	res, err := buildResource(ctx, serviceName, environment)
 	if err != nil {
@@ -57,8 +58,13 @@ func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment
 	)
 
 	return &otlpWriter{
-		logger: provider.Logger(loggerInstrumentation),
+		logger:   provider.Logger(loggerInstrumentation),
+		provider: provider,
 	}, nil
+}
+
+func (w *otlpWriter) Close() error {
+	return w.provider.Shutdown(context.Background())
 }
 
 func (w *otlpWriter) Write(p []byte) (int, error) {
@@ -84,27 +90,26 @@ func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, *pers
 		return nil, nil, nil, fmt.Errorf("otlp: %w", err)
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(cfg.Exporter))
-	if mode == "" {
-		mode = constant.ExporterHTTP
+	var exporter log.Exporter
+	var grpcManager *persistentgrpc.Manager
+	var httpClient *persistenthttp.Client
+
+	switch cfg.Protocol {
+	case constant.ProtocolHTTP:
+		exporter, httpClient, err = setupHTTPExporter(ctx, cfg, parsed)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	case constant.ProtocolGRPC:
+		exporter, grpcManager, err = setupGRPCExporter(ctx, cfg, parsed)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	default:
+		return nil, nil, nil, fmt.Errorf("logger: unsupported protocol %s", cfg.Protocol)
 	}
 
-	switch mode {
-	case constant.ExporterHTTP:
-		exporter, httpClient, err := setupHTTPExporter(ctx, cfg, parsed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		return exporter, nil, httpClient, nil
-	case constant.ExporterGRPC:
-		exporter, spool, err := setupGRPCExporter(ctx, cfg, parsed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		return exporter, spool, nil, nil
-	default:
-		return nil, nil, nil, fmt.Errorf("otlp: unsupported exporter %q", cfg.Exporter)
-	}
+	return exporter, grpcManager, httpClient, nil
 }
 
 type logExporterWithLogging struct {
@@ -231,7 +236,7 @@ func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.En
 		manager, err := persistentgrpc.NewManager(
 			cfg.QueueDir,
 			"logger",
-			cfg.Exporter,
+			cfg.Protocol,
 			"/opentelemetry.proto.collector.logs.v1.LogsService/Export",
 			func() proto.Message { return new(collog.ExportLogsServiceRequest) },
 			func() proto.Message { return new(collog.ExportLogsServiceResponse) },
@@ -260,14 +265,11 @@ func buildResource(ctx context.Context, serviceName, environment string) (*resou
 	if serviceName != "" {
 		attrs = append(attrs,
 			semconv.ServiceNameKey.String(serviceName),
-			attribute.String("service_name", serviceName),
 		)
 	}
 	if environment != "" {
 		attrs = append(attrs,
 			semconv.DeploymentEnvironmentNameKey.String(environment),
-			attribute.String("deployment.environment", environment),
-			attribute.String("environment", environment),
 		)
 	}
 
@@ -290,9 +292,7 @@ func buildResource(ctx context.Context, serviceName, environment string) (*resou
 func buildRecord(entry []byte) (otelLog.Record, trace.SpanContext) {
 	record := otelLog.Record{}
 	observed := time.Now()
-	record.SetObservedTimestamp(observed)
 	record.SetTimestamp(observed)
-	record.SetSeverityText("INFO")
 	record.SetSeverity(otelLog.SeverityInfo)
 	record.SetBody(otelLog.StringValue(strings.TrimSpace(string(entry))))
 
@@ -315,7 +315,6 @@ func buildRecord(entry []byte) (otelLog.Record, trace.SpanContext) {
 
 	if lvl, ok := payload["level"].(string); ok {
 		severityText := strings.ToUpper(lvl)
-		record.SetSeverityText(severityText)
 		record.SetSeverity(toSeverity(severityText))
 	}
 
@@ -364,7 +363,7 @@ func attributesFromPayload(payload map[string]any) []attribute.KeyValue {
 
 func skipField(key string) bool {
 	switch key {
-	case "time", "level", "message", traceIDField, spanIDField, "service_name":
+	case "time", "level", "message", traceIDField, spanIDField, ServiceNameKey, DeploymentEnvironmentNameKey:
 		return true
 	default:
 		return false
@@ -402,6 +401,6 @@ func toSeverity(level string) otelLog.Severity {
 	case "FATAL", "PANIC":
 		return otelLog.SeverityFatal
 	default:
-		return otelLog.SeverityInfo
+		return otelLog.SeverityUndefined
 	}
 }

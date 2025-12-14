@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelLog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/sdk/log"
+	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 )
 
 func TestOTLPWriterEmitsRecords(t *testing.T) {
@@ -80,7 +81,7 @@ func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
 			Enabled:  true,
 			Endpoint: u.Host,
 			Insecure: true,
-			Exporter: constant.ExporterHTTP,
+			Protocol: constant.ProtocolHTTP,
 			UseSpool: true,
 			QueueDir: queueDir,
 			Timeout:  50 * time.Millisecond,
@@ -115,7 +116,7 @@ func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
 }
 
 func TestConfigureExporterRejectsUnknown(t *testing.T) {
-	_, _, _, err := configureExporter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Exporter: "udp"})
+	_, _, _, err := configureExporter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Protocol: "udp"})
 	if err == nil {
 		t.Fatal("expected error for unsupported exporter")
 	}
@@ -131,11 +132,11 @@ func TestBuildResourceIncludesServiceAndEnvironment(t *testing.T) {
 	for _, attr := range attrs {
 		attrMap[attr.Key] = attr.Value
 	}
-	if attrMap[attribute.Key("service.name")].AsString() != "svc" {
-		t.Fatalf("missing service.name attribute: %#v", attrMap)
+	if attrMap[semconv.ServiceNameKey].AsString() != "svc" {
+		t.Fatalf("missing %s attribute: %#v", semconv.ServiceNameKey, attrMap)
 	}
-	if attrMap[attribute.Key("deployment.environment")].AsString() != "prod" {
-		t.Fatalf("missing deployment.environment attribute: %#v", attrMap)
+	if attrMap[semconv.DeploymentEnvironmentNameKey].AsString() != "prod" {
+		t.Fatalf("missing %s attribute: %#v", semconv.DeploymentEnvironmentNameKey, attrMap)
 	}
 }
 
@@ -201,7 +202,7 @@ func TestToSeverityMapping(t *testing.T) {
 		"warn":  otelLog.SeverityWarn,
 		"error": otelLog.SeverityError,
 		"fatal": otelLog.SeverityFatal,
-		"other": otelLog.SeverityInfo,
+		"other": otelLog.SeverityUndefined,
 	}
 	for input, expected := range cases {
 		if got := toSeverity(input); got != expected {
