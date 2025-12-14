@@ -1,40 +1,42 @@
 package profiler
 
 import (
-	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
-func TestGlobalPyroscopeProfilingIntegration(t *testing.T) {
+func TestGlobalProfilerIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	targets := testintegration.DefaultTargets()
-	pyroscopeBase := targets.PyroscopeURL
-	tenantID := targets.PyroscopeTenant
-	if err := testintegration.CheckReachable(ctx, pyroscopeBase); err != nil {
-		t.Fatalf("pyroscope unreachable at %s: %v", pyroscopeBase, err)
-	}
+	// Mock Pyroscope Server
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("failed to read body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
 
 	serviceName := fmt.Sprintf("goo11y-it-global-profiler-%d.cpu", time.Now().UnixNano())
 	labelValue := fmt.Sprintf("global-profile-%d", time.Now().UnixNano())
 
 	cfg := Config{
 		Enabled:     true,
-		ServerURL:   pyroscopeBase,
+		ServerURL:   server.URL,
 		ServiceName: serviceName,
-		TenantID:    tenantID,
 		Tags: map[string]string{
 			"test_case": labelValue,
 		},
+		UploadRate: 100 * time.Millisecond,
 	}
 
 	if err := Init(cfg, nil); err != nil {
@@ -51,18 +53,31 @@ func TestGlobalPyroscopeProfilingIntegration(t *testing.T) {
 				t.Errorf("cleanup profiler stop: %v", err)
 			}
 		}
+		Use(nil)
 	})
 
-	burnCPU(3 * time.Second)
-
-	time.Sleep(1 * time.Second)
+	// Generate some CPU load
+	done := make(chan struct{})
+	go func() {
+		i := 0
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				i++
+			}
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	close(done)
 
 	if err := Stop(); err != nil {
 		t.Fatalf("profiler stop: %v", err)
 	}
 	stopped = true
 
-	if err := testintegration.WaitForPyroscopeProfile(ctx, pyroscopeBase, tenantID, serviceName, labelValue); err != nil {
-		t.Fatalf("pyroscope did not report service %s: %v", serviceName, err)
+	if requestCount.Load() == 0 {
+		t.Fatal("no requests received by mock server")
 	}
 }

@@ -2,9 +2,7 @@ package profiler
 
 import (
 	"fmt"
-	"math"
 	"runtime"
-	"time"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/mfahmialkautsar/goo11y/logger"
@@ -64,16 +62,8 @@ func Setup(cfg Config, log *logger.Logger) (*Controller, error) {
 		profilerCfg.BasicAuthPassword = pass
 	}
 
-	uploadRate := cfg.UploadRate
-	if !cfg.Async {
-		if uploadRate <= 0 {
-			uploadRate = time.Duration(math.MaxInt64)
-		}
-	} else if uploadRate <= 0 {
-		uploadRate = 0
-	}
-	if uploadRate > 0 {
-		profilerCfg.UploadRate = uploadRate
+	if cfg.UploadRate > 0 {
+		profilerCfg.UploadRate = cfg.UploadRate
 	}
 
 	controller, err := pyroscope.Start(profilerCfg)

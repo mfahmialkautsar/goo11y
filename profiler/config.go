@@ -31,14 +31,6 @@ func (c Config) withDefaults() Config {
 	if c.Tags == nil {
 		c.Tags = make(map[string]string)
 	}
-	if c.ServiceName != "" {
-		if _, ok := c.Tags["service"]; !ok {
-			c.Tags["service"] = c.ServiceName
-		}
-		if _, ok := c.Tags["service_name"]; !ok {
-			c.Tags["service_name"] = c.ServiceName
-		}
-	}
 	return c
 }
 
