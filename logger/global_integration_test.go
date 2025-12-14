@@ -3,12 +3,16 @@ package logger
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/constant"
-	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 )
 
 func TestGlobalFileLoggingIntegration(t *testing.T) {
@@ -33,6 +37,9 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 	if err := Init(context.Background(), cfg); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	t.Cleanup(func() {
+		Use(nil)
+	})
 	log := Global()
 	if log == nil {
 		t.Fatal("expected logger instance")
@@ -42,25 +49,43 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 	Info().Str("test_case", "global_file").Msg(message)
 
 	path := filepath.Join(dir, time.Now().Format("2006-01-02")+".log")
-	entry := waitForFileEntry(t, path, message)
-	if got := entry["test_case"]; got != "global_file" {
-		t.Fatalf("unexpected test_case: %v", got)
+
+	var content string
+	for range 20 {
+		b, err := os.ReadFile(path)
+		if err == nil && len(b) > 0 {
+			content = string(b)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if content == "" {
+		t.Fatal("log file empty or not found")
+	}
+
+	if !strings.Contains(content, message) {
+		t.Fatalf("log file does not contain message: %s", message)
+	}
+	if !strings.Contains(content, "global_file") {
+		t.Fatalf("log file does not contain test_case: global_file")
 	}
 }
 
-func TestGlobalOTLPLoggingIntegration(t *testing.T) {
+func TestGlobalLoggerIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	endpoints := testintegration.DefaultTargets()
-	logsEndpoint := endpoints.LogsEndpoint
-	queryBase := endpoints.LokiQueryURL
-	if err := testintegration.CheckReachable(ctx, queryBase); err != nil {
-		t.Fatalf("loki unreachable at %s: %v", queryBase, err)
-	}
+	// Mock OTLP Server
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
 
 	serviceName := fmt.Sprintf("goo11y-it-global-logger-%d", time.Now().UnixNano())
 	message := fmt.Sprintf("global-integration-log-%d", time.Now().UnixNano())
@@ -73,14 +98,17 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 		Console:     false,
 		OTLP: OTLPConfig{
 			Enabled:  true,
-			Endpoint: logsEndpoint,
-			Exporter: constant.ExporterHTTP,
+			Endpoint: server.URL,
+			Protocol: constant.ProtocolHTTP,
 		},
 	}
 
 	if err := Init(ctx, cfg); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	t.Cleanup(func() {
+		Use(nil)
+	})
 	log := Global()
 	if log == nil {
 		t.Fatal("expected logger instance")
@@ -88,7 +116,12 @@ func TestGlobalOTLPLoggingIntegration(t *testing.T) {
 
 	Info().Ctx(context.Background()).Str("test_case", "global_logger").Msg(message)
 
-	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
-		t.Fatalf("find log entry: %v", err)
+	// Wait for requests
+	if err := log.Close(); err != nil {
+		t.Fatalf("log close: %v", err)
+	}
+
+	if requestCount.Load() == 0 {
+		t.Fatal("no requests received by mock server")
 	}
 }

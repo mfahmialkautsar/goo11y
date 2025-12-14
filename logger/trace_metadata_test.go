@@ -229,11 +229,8 @@ func TestLoggerWarnAndErrorMarkSpan(t *testing.T) {
 		t.Fatalf("unexpected warn event name: %s", warnEvents[0].Name)
 	}
 	warnAttrs := attributesToMap(warnEvents[0].Attributes)
-	if warnAttrs["log.severity"] != "warn" {
-		t.Fatalf("unexpected warn severity: %v", warnAttrs["log.severity"])
-	}
-	if warnAttrs["log.message"] != "warn message" {
-		t.Fatalf("unexpected warn message attr: %v", warnAttrs["log.message"])
+	if warnAttrs[LogMessageKey] != "warn message" {
+		t.Fatalf("unexpected warn message attr: %v", warnAttrs[LogMessageKey])
 	}
 	if warnSnapshot.Status().Code != codes.Unset {
 		t.Fatalf("unexpected warn status: %v", warnSnapshot.Status().Code)
@@ -248,11 +245,8 @@ func TestLoggerWarnAndErrorMarkSpan(t *testing.T) {
 		t.Fatalf("unexpected error event name: %s", errorEvents[0].Name)
 	}
 	errorAttrs := attributesToMap(errorEvents[0].Attributes)
-	if errorAttrs["log.severity"] != "error" {
-		t.Fatalf("unexpected error severity: %v", errorAttrs["log.severity"])
-	}
-	if errorAttrs["log.message"] != "error message" {
-		t.Fatalf("unexpected error message attr: %v", errorAttrs["log.message"])
+	if errorAttrs[LogMessageKey] != "error message" {
+		t.Fatalf("unexpected error message attr: %v", errorAttrs[LogMessageKey])
 	}
 	if errorSnapshot.Status().Code != codes.Error {
 		t.Fatalf("expected error status code error, got %v", errorSnapshot.Status().Code)

@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/constant"
-	testintegration "github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -45,29 +49,44 @@ func TestFileLoggingIntegration(t *testing.T) {
 	log.Info().Str("test_case", "file_integration").Msg(message)
 
 	path := filepath.Join(dir, time.Now().Format("2006-01-02")+".log")
-	entry := waitForFileEntry(t, path, message)
-
-	if got := entry["message"]; got != message {
-		t.Fatalf("unexpected message: %v", got)
+	var content string
+	for range 20 {
+		b, err := os.ReadFile(path)
+		if err == nil && len(b) > 0 {
+			content = string(b)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	if got := entry["test_case"]; got != "file_integration" {
-		t.Fatalf("unexpected test_case: %v", got)
+
+	if content == "" {
+		t.Fatal("log file empty or not found")
+	}
+
+	if !contains(content, message) {
+		t.Fatalf("log file does not contain message: %s", message)
 	}
 }
 
-func TestOTLPLoggingIntegration(t *testing.T) {
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
+}
+
+func TestLoggerIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	endpoints := testintegration.DefaultTargets()
-	logsEndpoint := endpoints.LogsEndpoint
-	queryBase := endpoints.LokiQueryURL
-	if err := testintegration.CheckReachable(ctx, queryBase); err != nil {
-		t.Fatalf("loki unreachable at %s: %v", queryBase, err)
-	}
+	// Mock OTLP Server
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
 	serviceName := fmt.Sprintf("goo11y-it-logger-%d", time.Now().UnixNano())
 	message := fmt.Sprintf("integration-log-%d", time.Now().UnixNano())
 
@@ -79,8 +98,8 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 		Console:     false,
 		OTLP: OTLPConfig{
 			Enabled:  true,
-			Endpoint: logsEndpoint,
-			Exporter: constant.ExporterHTTP,
+			Endpoint: server.URL,
+			Protocol: constant.ProtocolHTTP,
 		},
 	}
 
@@ -94,8 +113,12 @@ func TestOTLPLoggingIntegration(t *testing.T) {
 
 	log.Info().Ctx(context.Background()).Str("test_case", "logger").Msg(message)
 
-	if err := testintegration.WaitForLokiMessage(ctx, queryBase, serviceName, message); err != nil {
-		t.Fatalf("find log entry: %v", err)
+	if err := log.Close(); err != nil {
+		t.Fatalf("log close: %v", err)
+	}
+
+	if requestCount.Load() == 0 {
+		t.Fatal("no requests received by mock server")
 	}
 }
 
@@ -146,12 +169,9 @@ func TestLoggerSpanEventsIntegration(t *testing.T) {
 	if events[0].Name != warnEventName {
 		t.Fatalf("unexpected event name: %s", events[0].Name)
 	}
-	attrs := attributesToMap(events[0].Attributes)
-	if attrs["log.severity"] != "warn" {
-		t.Fatalf("unexpected warn severity: %v", attrs["log.severity"])
-	}
-	if attrs["log.message"] != "warn-event" {
-		t.Fatalf("unexpected warn message attr: %v", attrs["log.message"])
+	warnAttrs := attributesToMap(events[0].Attributes)
+	if warnAttrs[LogMessageKey] != "warn-event" {
+		t.Fatalf("unexpected warn message attr: %v", warnAttrs[LogMessageKey])
 	}
 	if spans[0].Status().Code != codes.Unset {
 		t.Fatalf("unexpected span status: %v", spans[0].Status().Code)

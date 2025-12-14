@@ -15,6 +15,7 @@ import (
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	pkgerrors "github.com/pkg/errors"
 	"github.com/rs/zerolog"
+	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 )
 
 const (
@@ -22,6 +23,12 @@ const (
 	spanIDField    = "span_id"
 	warnEventName  = "log.warn"
 	errorEventName = "log.error"
+	LogMessageKey  = "log.message"
+)
+
+var (
+	ServiceNameKey               = StandardizeKey(string(semconv.ServiceNameKey))
+	DeploymentEnvironmentNameKey = StandardizeKey(string(semconv.DeploymentEnvironmentNameKey))
 )
 
 const callerSkipFrameCount = 2
@@ -30,6 +37,10 @@ var (
 	processRoot     string
 	processRootOnce sync.Once
 )
+
+func StandardizeKey(key string) string {
+	return strings.ReplaceAll(key, ".", "_")
+}
 
 // Logger wraps zerolog.Logger with trace metadata injection and resource management.
 type Logger struct {
@@ -49,7 +60,7 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 		return nil, nil
 	}
 
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixNano
+	zerolog.TimeFieldFormat = defaultConsoleTimeFormat
 	zerolog.ErrorStackMarshaler = marshalStackTrace
 	zerolog.CallerSkipFrameCount = callerSkipFrameCount
 	zerolog.CallerMarshalFunc = callerLocationFormatter
@@ -77,12 +88,9 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 		otlpWriter, err := newOTLPWriter(ctx, cfg.OTLP, cfg.ServiceName, cfg.Environment)
 		if err != nil {
 			return nil, fmt.Errorf("setup otlp writer: %w", err)
+		} else {
+			fanout.add("otlp", otlpWriter)
 		}
-		transport := strings.ToLower(strings.TrimSpace(cfg.OTLP.Exporter))
-		if transport == "" {
-			transport = "http"
-		}
-		fanout.add(transport, otlpWriter)
 	}
 	if fanout.len() == 0 {
 		fanout.add("stdout", os.Stdout)
@@ -94,9 +102,17 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 		With().
 		Timestamp().
 		Caller().
-		Str("service_name", cfg.ServiceName).
 		Logger()
 	base = base.Hook(spanHook{})
+
+	baseCtx := base.With()
+	if cfg.ServiceName != "" {
+		baseCtx = baseCtx.Str(ServiceNameKey, cfg.ServiceName)
+	}
+	if cfg.Environment != "" {
+		baseCtx = baseCtx.Str(DeploymentEnvironmentNameKey, cfg.Environment)
+	}
+	base = baseCtx.Logger()
 
 	level, err := zerolog.ParseLevel(strings.ToLower(cfg.Level))
 	if err != nil {

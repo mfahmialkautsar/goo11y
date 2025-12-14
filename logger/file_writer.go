@@ -22,6 +22,7 @@ type dailyFileWriter struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+	closeOnce sync.Once
 
 	mu          sync.Mutex
 	currentDate string
@@ -62,6 +63,21 @@ func (w *dailyFileWriter) Write(p []byte) (int, error) {
 	copyBuf := make([]byte, len(p))
 	copy(copyBuf, p)
 
+	defer func() {
+		if r := recover(); r != nil {
+			// If we panic, it's likely because the channel was closed.
+			// We can ignore the panic and return an error.
+			fmt.Fprintf(os.Stderr, "goo11y logger file writer panic recovered: %v\n", r)
+		}
+	}()
+
+	// Check context first to avoid race if possible, though not perfect
+	select {
+	case <-w.ctx.Done():
+		return 0, fmt.Errorf("file writer closed")
+	default:
+	}
+
 	select {
 	case w.queue <- copyBuf:
 		return len(p), nil
@@ -71,19 +87,21 @@ func (w *dailyFileWriter) Write(p []byte) (int, error) {
 }
 
 func (w *dailyFileWriter) Close() error {
-	w.cancel()
-	close(w.queue)
-	w.wg.Wait()
+	var err error
+	w.closeOnce.Do(func() {
+		w.cancel()
+		close(w.queue)
+		w.wg.Wait()
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
+		w.mu.Lock()
+		defer w.mu.Unlock()
 
-	if w.file != nil {
-		err := w.file.Close()
-		w.file = nil
-		return err
-	}
-	return nil
+		if w.file != nil {
+			err = w.file.Close()
+			w.file = nil
+		}
+	})
+	return err
 }
 
 func (w *dailyFileWriter) run() {

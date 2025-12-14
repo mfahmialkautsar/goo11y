@@ -126,9 +126,6 @@ func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
 		t.Fatalf("unexpected error event name: %s", events[0].Name)
 	}
 	attrs := attributesToMap(events[0].Attributes)
-	if attrs["log.severity"] != "error" {
-		t.Fatalf("unexpected error severity: %v", attrs["log.severity"])
-	}
 	if attrs["log.message"] != "global-span-log" {
 		t.Fatalf("unexpected error message attr: %v", attrs["log.message"])
 	}

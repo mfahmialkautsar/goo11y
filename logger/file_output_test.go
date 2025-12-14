@@ -38,8 +38,8 @@ func TestFileLoggerWritesDailyFile(t *testing.T) {
 	expectedPath := filepath.Join(dir, time.Now().Format("2006-01-02")+".log")
 	entry := waitForFileEntry(t, expectedPath, message)
 
-	if got := entry["service_name"]; got != "file-logger" {
-		t.Fatalf("unexpected service_name: %v", got)
+	if got := entry[ServiceNameKey]; got != "file-logger" {
+		t.Fatalf("unexpected %s: %v", ServiceNameKey, got)
 	}
 	if got := entry["message"]; got != message {
 		t.Fatalf("unexpected message: %v", got)

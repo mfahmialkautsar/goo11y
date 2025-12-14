@@ -31,11 +31,9 @@ func (spanHook) Run(event *zerolog.Event, level zerolog.Level, msg string) {
 	if !span.IsRecording() {
 		return
 	}
-	attrs := []attribute.KeyValue{
-		attribute.String("log.severity", level.String()),
-	}
+	attrs := []attribute.KeyValue{}
 	if msg != "" {
-		attrs = append(attrs, attribute.String("log.message", msg))
+		attrs = append(attrs, attribute.String(LogMessageKey, msg))
 	}
 	switch {
 	case level >= zerolog.ErrorLevel:
