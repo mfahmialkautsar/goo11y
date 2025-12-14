@@ -93,7 +93,7 @@ func TestTracerForceFlush(t *testing.T) {
 	cfg := Config{
 		Enabled:     true,
 		Endpoint:    "http://localhost:9999",
-		Exporter:    "http",
+		Protocol:    "http",
 		ServiceName: "test-tracer-flush",
 	}
 
@@ -117,7 +117,7 @@ func TestTracerRegisterSpanProcessor(t *testing.T) {
 	cfg := Config{
 		Enabled:     true,
 		Endpoint:    "http://localhost:9999",
-		Exporter:    "http",
+		Protocol:    "http",
 		ServiceName: "test-span-processor",
 	}
 

@@ -20,14 +20,36 @@ type Provider struct {
 	provider *sdktrace.TracerProvider
 }
 
+// NewProvider creates a new Provider wrapping the given SDK provider.
+// This is primarily used for testing.
+func NewProvider(p *sdktrace.TracerProvider) *Provider {
+	return &Provider{
+		provider: p,
+	}
+}
+
 // RegisterSpanProcessor attaches the supplied span processor to the underlying provider.
 func (p *Provider) RegisterSpanProcessor(processor sdktrace.SpanProcessor) {
 	p.provider.RegisterSpanProcessor(processor)
 }
 
+// Option configures the tracer provider.
+type Option func(*config)
+
+type config struct {
+	exporter sdktrace.SpanExporter
+}
+
+// WithSpanExporter configures the tracer provider to use the given exporter.
+func WithSpanExporter(exporter sdktrace.SpanExporter) Option {
+	return func(c *config) {
+		c.exporter = exporter
+	}
+}
+
 // Setup initializes an OTLP tracer provider based on the provided configuration.
-// Selects HTTP or gRPC exporters based on the Exporter config field.
-func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {
+// Selects HTTP or gRPC exporters based on the Protocol config field.
+func Setup(ctx context.Context, cfg Config, res *resource.Resource, opts ...Option) (*Provider, error) {
 	cfg = cfg.ApplyDefaults()
 
 	if !cfg.Enabled {
@@ -38,34 +60,43 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 		return nil, fmt.Errorf("tracer config: %w", err)
 	}
 
-	endpoint, err := otlputil.ParseEndpoint(cfg.Endpoint, cfg.Insecure)
-	if err != nil {
-		return nil, fmt.Errorf("tracer: %w", err)
+	c := config{}
+	for _, opt := range opts {
+		opt(&c)
 	}
 
 	var exporter sdktrace.SpanExporter
-	var httpClient *persistenthttp.Client
-	var grpcManager *persistentgrpc.Manager
-
-	switch cfg.Exporter {
-	case constant.ExporterGRPC:
-		exporter, err = setupGRPCExporter(ctx, cfg, endpoint)
-		if wrapper, ok := exporter.(*spanExporterWithLogging); ok {
-			grpcManager = wrapper.spool
+	if c.exporter != nil {
+		exporter = c.exporter
+	} else {
+		endpoint, err := otlputil.ParseEndpoint(cfg.Endpoint, cfg.Insecure)
+		if err != nil {
+			return nil, fmt.Errorf("tracer: %w", err)
 		}
-	case constant.ExporterHTTP:
-		var httpSpool *persistenthttp.Client
-		exporter, httpSpool, err = setupHTTPExporter(ctx, cfg, endpoint)
-		httpClient = httpSpool
-	default:
-		return nil, fmt.Errorf("tracer: unsupported exporter %s", cfg.Exporter)
-	}
 
-	if err != nil {
-		return nil, err
-	}
+		var httpClient *persistenthttp.Client
+		var grpcManager *persistentgrpc.Manager
 
-	exporter = wrapSpanExporter(exporter, "tracer", cfg.Exporter, grpcManager, httpClient)
+		switch cfg.Protocol {
+		case constant.ProtocolGRPC:
+			exporter, err = setupGRPCExporter(ctx, cfg, endpoint)
+			if wrapper, ok := exporter.(*spanExporterWithLogging); ok {
+				grpcManager = wrapper.spool
+			}
+		case constant.ProtocolHTTP:
+			var httpSpool *persistenthttp.Client
+			exporter, httpSpool, err = setupHTTPExporter(ctx, cfg, endpoint)
+			httpClient = httpSpool
+		default:
+			return nil, fmt.Errorf("tracer: unsupported protocol %s", cfg.Protocol)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		exporter = wrapSpanExporter(exporter, "tracer", cfg.Protocol, grpcManager, httpClient)
+	}
 
 	sam := samplerFromRatio(cfg.SampleRatio)
 	options := []sdktrace.TracerProviderOption{
