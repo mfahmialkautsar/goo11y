@@ -12,8 +12,8 @@ import (
 var globalProvider atomic.Value
 
 // Init configures the meter provider and stores it as the package-level singleton.
-func Init(ctx context.Context, cfg Config, res *resource.Resource) error {
-	provider, err := Setup(ctx, cfg, res)
+func Init(ctx context.Context, cfg Config, res *resource.Resource, opts ...Option) error {
+	provider, err := Setup(ctx, cfg, res, opts...)
 	if err != nil {
 		return err
 	}

@@ -12,7 +12,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 )
 
@@ -23,9 +22,35 @@ type Provider struct {
 	flush    func(context.Context) error
 }
 
+// NewProvider creates a new Provider wrapping the given SDK provider.
+// This is primarily used for testing.
+func NewProvider(p *sdkmetric.MeterProvider) *Provider {
+	return &Provider{
+		provider: p,
+		meter:    p.Meter(""),
+		flush: func(ctx context.Context) error {
+			return p.ForceFlush(ctx)
+		},
+	}
+}
+
+// Option configures the meter provider.
+type Option func(*config)
+
+type config struct {
+	reader sdkmetric.Reader
+}
+
+// WithMetricReader configures the meter provider to use the given reader.
+func WithMetricReader(reader sdkmetric.Reader) Option {
+	return func(c *config) {
+		c.reader = reader
+	}
+}
+
 // Setup configures an OTLP meter provider and registers it globally.
-// Selects HTTP or gRPC exporters based on the Exporter config field.
-func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, error) {
+// Selects HTTP or gRPC exporters based on the Protocol config field.
+func Setup(ctx context.Context, cfg Config, res *resource.Resource, opts ...Option) (*Provider, error) {
 	cfg = cfg.ApplyDefaults()
 
 	if !cfg.Enabled {
@@ -36,60 +61,51 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource) (*Provider, 
 		return nil, fmt.Errorf("meter config: %w", err)
 	}
 
-	endpoint, err := otlputil.ParseEndpoint(cfg.Endpoint, cfg.Insecure)
-	if err != nil {
-		return nil, fmt.Errorf("meter: %w", err)
+	c := config{}
+	for _, opt := range opts {
+		opt(&c)
 	}
-
-	var exporter sdkmetric.Exporter
-	var httpClient *persistenthttp.Client
-	var grpcManager *persistentgrpc.Manager
-
-	switch cfg.Exporter {
-	case constant.ExporterGRPC:
-		exporter, err = setupGRPCExporter(ctx, cfg, endpoint)
-		if wrapper, ok := exporter.(metricExporterWithLogging); ok {
-			grpcManager = wrapper.spool
-		}
-	case constant.ExporterHTTP:
-		var httpSpool *persistenthttp.Client
-		exporter, httpSpool, err = setupHTTPExporter(ctx, cfg, endpoint)
-		httpClient = httpSpool
-	default:
-		return nil, fmt.Errorf("meter: unsupported exporter %s", cfg.Exporter)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	exporter = wrapMetricExporter(exporter, "meter", cfg.Exporter, grpcManager, httpClient)
 
 	var (
 		reader sdkmetric.Reader
 		flush  func(context.Context) error
 	)
 
-	if !cfg.Async {
-		manualReader := sdkmetric.NewManualReader()
-		reader = manualReader
-		flush = func(ctx context.Context) error {
-			var rm metricdata.ResourceMetrics
-			if err := manualReader.Collect(ctx, &rm); err != nil {
-				if !errors.Is(err, sdkmetric.ErrReaderShutdown) && !errors.Is(err, sdkmetric.ErrReaderNotRegistered) {
-					otlputil.LogExportFailure("meter", cfg.Exporter, err)
-				}
-				return err
-			}
-			if len(rm.ScopeMetrics) == 0 {
-				return exporter.ForceFlush(ctx)
-			}
-			if err := exporter.Export(ctx, &rm); err != nil {
-				return err
-			}
-			return exporter.ForceFlush(ctx)
-		}
+	if c.reader != nil {
+		reader = c.reader
+		// If custom reader is provided, we assume it handles export or is manual.
+		// We can try to cast to ManualReader to provide flush if possible, or just use ForceFlush from provider.
+		// For now, we leave flush nil, so Provider.ForceFlush will call provider.ForceFlush.
 	} else {
+		endpoint, err := otlputil.ParseEndpoint(cfg.Endpoint, cfg.Insecure)
+		if err != nil {
+			return nil, fmt.Errorf("meter: %w", err)
+		}
+
+		var exporter sdkmetric.Exporter
+		var httpClient *persistenthttp.Client
+		var grpcManager *persistentgrpc.Manager
+
+		switch cfg.Protocol {
+		case constant.ProtocolGRPC:
+			exporter, err = setupGRPCExporter(ctx, cfg, endpoint)
+			if wrapper, ok := exporter.(metricExporterWithLogging); ok {
+				grpcManager = wrapper.spool
+			}
+		case constant.ProtocolHTTP:
+			var httpSpool *persistenthttp.Client
+			exporter, httpSpool, err = setupHTTPExporter(ctx, cfg, endpoint)
+			httpClient = httpSpool
+		default:
+			return nil, fmt.Errorf("meter: unsupported protocol %s", cfg.Protocol)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		exporter = wrapMetricExporter(exporter, "meter", cfg.Protocol, grpcManager, httpClient)
+
 		reader = sdkmetric.NewPeriodicReader(
 			exporter,
 			sdkmetric.WithInterval(cfg.ExportInterval),

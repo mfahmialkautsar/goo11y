@@ -77,12 +77,18 @@ func TestUseNilResetsGlobalMeter(t *testing.T) {
 }
 
 func TestGlobalForceFlush(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
 	ctx := context.Background()
 	res := resource.Empty()
 
 	cfg := Config{
 		Enabled:     true,
-		Endpoint:    "http://localhost:9999",
+		Endpoint:    server.Listener.Addr().String(),
+		Insecure:    true,
 		ServiceName: "test-global-flush",
 	}
 

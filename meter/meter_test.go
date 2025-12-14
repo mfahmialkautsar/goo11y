@@ -2,6 +2,8 @@ package meter
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -46,13 +48,19 @@ func TestMeterDefaultsDisableSpool(t *testing.T) {
 }
 
 func TestMeterForceFlush(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
 	ctx := context.Background()
 	res := resource.Empty()
 
 	cfg := Config{
 		Enabled:     true,
-		Endpoint:    "http://localhost:9999",
-		Exporter:    "http",
+		Endpoint:    server.Listener.Addr().String(),
+		Insecure:    true,
+		Protocol:    "http",
 		ServiceName: "test-meter-flush",
 	}
 
