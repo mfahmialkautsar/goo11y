@@ -8,9 +8,8 @@
 
 ## Testing
 
-1. Start the Grafana MLTP stack by running the composite action `.github/actions/start-mltp-stack` or replicating the steps from that action locally.
-2. Run `go test ./...`.
-3. Run `go vet ./...` before submitting changes.
+1. Run `go test ./...`.
+2. Run `go vet ./...` before submitting changes.
 
 ## Code Style
 

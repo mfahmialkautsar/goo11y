@@ -32,9 +32,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Start MLTP stack
-        uses: ./.github/actions/start-mltp-stack
-
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -61,7 +58,3 @@ jobs:
           fail_ci_if_error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-      - name: Stop MLTP stack
-        if: always()
-        uses: ./.github/actions/stop-mltp-stack
