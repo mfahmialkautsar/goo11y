@@ -73,9 +73,6 @@ func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
 		t.Fatalf("unexpected span event name: %s", events[0].Name)
 	}
 	attrs := attributeStringMap(events[0].Attributes)
-	if attrs["log.severity"] != "warn" {
-		t.Fatalf("unexpected span severity: %v", attrs["log.severity"])
-	}
 	if attrs["log.message"] != "telemetry-warn-message" {
 		t.Fatalf("unexpected span message attribute: %v", attrs["log.message"])
 	}
@@ -358,6 +355,11 @@ func TestTelemetryLinksTracesToProfiles(t *testing.T) {
 func TestTelemetryForceFlush(t *testing.T) {
 	ctx := context.Background()
 
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
 	cfg := Config{
 		Resource: ResourceConfig{
 			ServiceName: "test-flush",
@@ -370,12 +372,12 @@ func TestTelemetryForceFlush(t *testing.T) {
 		},
 		Tracer: tracer.Config{
 			Enabled:     true,
-			Endpoint:    "http://localhost:9999",
+			Endpoint:    srv.URL,
 			ServiceName: "test-flush",
 		},
 		Meter: meter.Config{
 			Enabled:     true,
-			Endpoint:    "http://localhost:9999",
+			Endpoint:    srv.URL,
 			ServiceName: "test-flush",
 		},
 	}

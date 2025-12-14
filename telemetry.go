@@ -28,11 +28,38 @@ type Telemetry struct {
 	shutdownHooks []func(context.Context) error
 }
 
+// Option configures the telemetry provider.
+type Option func(*config)
+
+type config struct {
+	tracerOptions []tracer.Option
+	meterOptions  []meter.Option
+}
+
+// WithTracerOption adds options for the tracer provider.
+func WithTracerOption(opts ...tracer.Option) Option {
+	return func(c *config) {
+		c.tracerOptions = append(c.tracerOptions, opts...)
+	}
+}
+
+// WithMeterOption adds options for the meter provider.
+func WithMeterOption(opts ...meter.Option) Option {
+	return func(c *config) {
+		c.meterOptions = append(c.meterOptions, opts...)
+	}
+}
+
 // New wires the requested observability components based on the provided configuration.
-func New(ctx context.Context, cfg Config) (*Telemetry, error) {
+func New(ctx context.Context, cfg Config, opts ...Option) (*Telemetry, error) {
 	cfg.applyDefaults()
 	if err := cfg.validate(); err != nil {
 		return nil, err
+	}
+
+	c := config{}
+	for _, opt := range opts {
+		opt(&c)
 	}
 
 	res, err := buildResource(ctx, cfg)
@@ -71,13 +98,13 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 			err      error
 		)
 		if cfg.Tracer.UseGlobal {
-			err = tracer.Init(ctx, cfg.Tracer, res)
+			err = tracer.Init(ctx, cfg.Tracer, res, c.tracerOptions...)
 			if err != nil {
 				return nil, fmt.Errorf("setup tracer: %w", err)
 			}
 			provider = tracer.Global()
 		} else {
-			provider, err = tracer.Setup(ctx, cfg.Tracer, res)
+			provider, err = tracer.Setup(ctx, cfg.Tracer, res, c.tracerOptions...)
 			if err != nil {
 				return nil, fmt.Errorf("setup tracer: %w", err)
 			}
@@ -94,13 +121,13 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 			err      error
 		)
 		if cfg.Meter.UseGlobal {
-			err = meter.Init(ctx, cfg.Meter, res)
+			err = meter.Init(ctx, cfg.Meter, res, c.meterOptions...)
 			if err != nil {
 				return nil, fmt.Errorf("setup meter: %w", err)
 			}
 			provider = meter.Global()
 		} else {
-			provider, err = meter.Setup(ctx, cfg.Meter, res)
+			provider, err = meter.Setup(ctx, cfg.Meter, res, c.meterOptions...)
 			if err != nil {
 				return nil, fmt.Errorf("setup meter: %w", err)
 			}

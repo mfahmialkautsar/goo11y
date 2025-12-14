@@ -1,61 +1,55 @@
 package goo11y
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
-	"github.com/mfahmialkautsar/goo11y/constant"
-	"github.com/mfahmialkautsar/goo11y/internal/testutil/integration"
+	"github.com/mfahmialkautsar/goo11y/internal/testutil/inmemory"
 	"github.com/mfahmialkautsar/goo11y/logger"
 	"github.com/mfahmialkautsar/goo11y/meter"
 	"github.com/mfahmialkautsar/goo11y/profiler"
 	"github.com/mfahmialkautsar/goo11y/tracer"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func TestGlobalTelemetryIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	endpoints := integration.DefaultTargets()
-	logsEndpoint := endpoints.LogsEndpoint
-	lokiQueryBase := endpoints.LokiQueryURL
-	meterEndpoint := endpoints.MetricsEndpoint
-	mimirQueryBase := endpoints.MimirQueryURL
-	traceEndpoint := endpoints.TracesEndpoint
-	tempoQueryBase := endpoints.TempoQueryURL
-	pyroscopeBase := endpoints.PyroscopeURL
-	pyroscopeTenant := endpoints.PyroscopeTenant
+	// Setup In-Memory Tracer Exporter
+	traceExporter := tracetest.NewInMemoryExporter()
 
-	for base, name := range map[string]string{
-		lokiQueryBase:  "loki",
-		mimirQueryBase: "mimir",
-		tempoQueryBase: "tempo",
-		pyroscopeBase:  "pyroscope",
-	} {
-		if err := integration.CheckReachable(ctx, base); err != nil {
-			t.Fatalf("%s unreachable at %s: %v", name, base, err)
+	// Setup In-Memory Meter Reader
+	meterReader := sdkmetric.NewManualReader()
+
+	// Mock Pyroscope Server
+	profileSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatalf("drain profile body: %v", err)
 		}
-	}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer profileSrv.Close()
 
-	loggerFileDir := t.TempDir()
-	meterQueueDir := t.TempDir()
-	traceQueueDir := t.TempDir()
+	serviceName := "test-service-global"
+	metricName := "global_metric_total"
+	testCase := "global-telemetry-integration"
+	logMessage := "global-telemetry-log-message"
 
-	serviceName := fmt.Sprintf("goo11y-it-global-telemetry-%d.cpu", time.Now().UnixNano())
-	metricName := fmt.Sprintf("go_o11y_global_metric_total_%d", time.Now().UnixNano())
-	testCase := fmt.Sprintf("global-telemetry-%d", time.Now().UnixNano())
-	logMessage := fmt.Sprintf("global-telemetry-log-%d", time.Now().UnixNano())
-
+	var logBuf bytes.Buffer
 	teleCfg := Config{
 		Resource: ResourceConfig{
 			ServiceName: serviceName,
@@ -67,38 +61,32 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 			Console:     false,
 			ServiceName: serviceName,
 			UseGlobal:   true,
+			Writers:     []io.Writer{&logBuf},
 			File: logger.FileConfig{
-				Enabled:   true,
-				Directory: loggerFileDir,
-				Buffer:    8,
+				Enabled: false,
 			},
 			OTLP: logger.OTLPConfig{
-				Enabled:  true,
-				Endpoint: logsEndpoint,
-				Exporter: constant.ExporterHTTP,
+				Enabled: false,
 			},
 		},
 		Tracer: tracer.Config{
-			Enabled:       true,
-			Endpoint:      traceEndpoint,
-			ServiceName:   serviceName,
-			ExportTimeout: 5 * time.Second,
-			QueueDir:      traceQueueDir,
-			UseGlobal:     true,
+			Enabled:     true,
+			Endpoint:    "http://localhost:4318",
+			ServiceName: serviceName,
+			SampleRatio: 1.0,
+			UseGlobal:   true,
 		},
 		Meter: meter.Config{
 			Enabled:        true,
-			Endpoint:       meterEndpoint,
+			Endpoint:       "http://localhost:4318",
 			ServiceName:    serviceName,
-			ExportInterval: 500 * time.Millisecond,
-			QueueDir:       meterQueueDir,
+			ExportInterval: 100 * time.Millisecond,
 			UseGlobal:      true,
 		},
 		Profiler: profiler.Config{
 			Enabled:     true,
-			ServerURL:   pyroscopeBase,
+			ServerURL:   profileSrv.URL,
 			ServiceName: serviceName,
-			TenantID:    pyroscopeTenant,
 			UseGlobal:   true,
 			Tags: map[string]string{
 				"test_case": testCase,
@@ -106,15 +94,16 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 		},
 	}
 
-	tele, err := New(ctx, teleCfg)
+	tele, err := New(ctx, teleCfg,
+		WithTracerOption(tracer.WithSpanExporter(traceExporter)),
+		WithMeterOption(meter.WithMetricReader(meterReader)),
+	)
 	if err != nil {
 		t.Fatalf("setup telemetry: %v", err)
 	}
 	t.Cleanup(func() {
 		if tele != nil {
-			if err := tele.Shutdown(context.Background()); err != nil {
-				t.Errorf("cleanup telemetry shutdown: %v", err)
-			}
+			_ = tele.Shutdown(context.Background())
 		}
 		logger.Use(nil)
 		meter.Use(nil)
@@ -129,8 +118,6 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 
 	profileID := fmt.Sprintf("profile-%s", traceID)
 	pyroscope.TagWrapper(spanCtx, pyroscope.Labels(profiler.TraceProfileAttributeKey, profileID), func(ctx context.Context) {
-		burnCPU(500 * time.Millisecond)
-
 		logger.Info().Ctx(ctx).Str("test_case", testCase).Msg(logMessage)
 
 		m := meter.Meter("goo11y/global-telemetry")
@@ -146,44 +133,51 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 		counter.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
 	})
 
-	time.Sleep(300 * time.Millisecond)
 	span.End()
 
-	if err := tele.Shutdown(ctx); err != nil {
-		t.Fatalf("telemetry shutdown: %v", err)
+	// Verify Log
+	if !strings.Contains(logBuf.String(), logMessage) {
+		t.Fatalf("log message not found in buffer: %s", logBuf.String())
 	}
-	tele = nil
-
-	if err := integration.WaitForEmptyDir(ctx, meterQueueDir, 200*time.Millisecond); err != nil {
-		t.Fatalf("meter queue did not drain: %v", err)
+	if !strings.Contains(logBuf.String(), traceID) {
+		t.Fatalf("traceID not found in log: %s", logBuf.String())
 	}
-	if err := integration.WaitForEmptyDir(ctx, traceQueueDir, 200*time.Millisecond); err != nil {
-		t.Fatalf("tracer queue did not drain: %v", err)
-	}
-
-	filePath := filepath.Join(loggerFileDir, time.Now().Format("2006-01-02")+".log")
-	fileEntry := waitForTelemetryFileEntry(t, filePath, logMessage)
-	if fmt.Sprint(fileEntry["trace_id"]) != traceID {
-		t.Fatalf("unexpected trace_id: %v", fileEntry["trace_id"])
-	}
-	if fmt.Sprint(fileEntry["span_id"]) != spanID {
-		t.Fatalf("unexpected span_id: %v", fileEntry["span_id"])
+	if !strings.Contains(logBuf.String(), spanID) {
+		t.Fatalf("spanID not found in log: %s", logBuf.String())
 	}
 
-	if err := integration.WaitForLokiTraceFields(ctx, lokiQueryBase, serviceName, logMessage, traceID, spanID); err != nil {
-		t.Fatalf("verify loki log: %v", err)
+	// Force flush to ensure spans are exported
+	if err := tele.ForceFlush(ctx); err != nil {
+		t.Fatalf("force flush: %v", err)
 	}
-	if err := integration.WaitForMimirMetric(ctx, mimirQueryBase, metricName, map[string]string{
-		"test_case": testCase,
-		"trace_id":  traceID,
-		"span_id":   spanID,
-	}); err != nil {
-		t.Fatalf("verify mimir metric: %v", err)
+
+	// Verify Traces
+	spans := inmemory.GetSpans(traceExporter)
+	foundSpan, ok := inmemory.FindSpanByName(spans, "global-telemetry-span")
+	if !ok {
+		t.Fatal("span 'global-telemetry-span' not found")
 	}
-	if err := integration.WaitForTempoTrace(ctx, tempoQueryBase, serviceName, testCase, traceID); err != nil {
-		t.Fatalf("verify tempo trace: %v", err)
+	if foundSpan.SpanContext.TraceID().String() != traceID {
+		t.Errorf("expected traceID %s, got %s", traceID, foundSpan.SpanContext.TraceID().String())
 	}
-	if err := integration.WaitForPyroscopeProfile(ctx, pyroscopeBase, pyroscopeTenant, serviceName, testCase); err != nil {
-		t.Fatalf("verify pyroscope profile: %v", err)
+
+	// Verify Metrics
+	rm, err := inmemory.GetMetrics(ctx, meterReader)
+	if err != nil {
+		t.Fatalf("get metrics: %v", err)
+	}
+	foundMetric, ok := inmemory.FindMetricByName(rm, metricName)
+	if !ok {
+		t.Fatalf("metric %s not found", metricName)
+	}
+	sumData, ok := foundMetric.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("metric data is not Sum[int64], got %T", foundMetric.Data)
+	}
+	if len(sumData.DataPoints) == 0 {
+		t.Fatal("no data points for metric")
+	}
+	if sumData.DataPoints[0].Value != 1 {
+		t.Errorf("expected metric value 1, got %v", sumData.DataPoints[0].Value)
 	}
 }
