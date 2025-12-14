@@ -22,7 +22,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 				Console:     true,
 				OTLP: OTLPConfig{
 					Timeout:  0,
-					Exporter: "http",
+					Protocol: "http",
 				},
 			},
 		},
@@ -40,7 +40,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 				Console:     true,
 				OTLP: OTLPConfig{
 					Timeout:  0,
-					Exporter: "http",
+					Protocol: "invalid",
 				},
 			},
 		},

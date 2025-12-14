@@ -16,8 +16,8 @@ type Config struct {
 	Enabled        bool
 	Endpoint       string `validate:"required_if=Enabled true"`
 	Insecure       bool
-	Exporter       string `default:"http" validate:"oneof=http grpc"`
-	Async          bool
+	Protocol       string `default:"http" validate:"oneof=http grpc"`
+	Async          bool   `default:"true"`
 	UseSpool       bool
 	ServiceName    string        `default:"unknown-service"`
 	ExportInterval time.Duration `default:"10s" validate:"gt=0"`

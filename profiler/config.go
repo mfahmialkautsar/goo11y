@@ -22,7 +22,7 @@ type Config struct {
 	ServiceGitRef        string
 	Credentials          auth.Credentials
 	UseGlobal            bool
-	Async                bool
+	Async                bool          `default:"true"`
 	UploadRate           time.Duration `validate:"gte=0"`
 }
 

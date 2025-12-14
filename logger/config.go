@@ -36,9 +36,9 @@ type OTLPConfig struct {
 	Insecure    bool
 	Headers     map[string]string
 	Timeout     time.Duration `default:"5s" validate:"omitempty,gt=0"`
-	Exporter    string        `default:"http" validate:"oneof=http grpc"`
+	Protocol    string        `default:"http" validate:"oneof=http grpc"`
 	Credentials auth.Credentials
-	Async       bool
+	Async       bool `default:"true"`
 	UseSpool    bool
 	QueueDir    string
 }

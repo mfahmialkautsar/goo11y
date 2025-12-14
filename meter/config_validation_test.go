@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mfahmialkautsar/goo11y/constant"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestConfigApplyDefaults(t *testing.T) {
@@ -17,7 +18,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			name:  "empty config",
 			input: Config{},
 			expected: Config{
-				Exporter:       "http",
+				Protocol:       "http",
 				ServiceName:    constant.DefaultServiceName,
 				ExportInterval: 10 * time.Second,
 			},
@@ -31,7 +32,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			expected: Config{
 				Enabled:        true,
 				Endpoint:       "http://localhost:4318",
-				Exporter:       "http",
+				Protocol:       "http",
 				ServiceName:    constant.DefaultServiceName,
 				ExportInterval: 10 * time.Second,
 			},
@@ -41,9 +42,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.input.ApplyDefaults()
-			if result.Exporter != tt.expected.Exporter {
-				t.Errorf("Exporter: got %q, want %q", result.Exporter, tt.expected.Exporter)
-			}
+			assert.Equal(t, result.Protocol, tt.expected.Protocol)
 			if result.ServiceName != tt.expected.ServiceName {
 				t.Errorf("ServiceName: got %q, want %q", result.ServiceName, tt.expected.ServiceName)
 			}
@@ -89,7 +88,7 @@ func TestConfigValidate(t *testing.T) {
 			config: Config{
 				Enabled:     true,
 				Endpoint:    "localhost:4317",
-				Exporter:    "grpc",
+				Protocol:    "grpc",
 				ServiceName: "test-service",
 			}.ApplyDefaults(),
 			wantErr: false,
@@ -99,7 +98,7 @@ func TestConfigValidate(t *testing.T) {
 			config: Config{
 				Enabled:     true,
 				Endpoint:    "localhost:4318",
-				Exporter:    "invalid",
+				Protocol:    "invalid",
 				ServiceName: "test-service",
 			},
 			wantErr: true,

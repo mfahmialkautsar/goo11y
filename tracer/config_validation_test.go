@@ -17,7 +17,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			name:  "empty config",
 			input: Config{},
 			expected: Config{
-				Exporter:      "http",
+				Protocol:      "http",
 				ServiceName:   constant.DefaultServiceName,
 				SampleRatio:   1.0,
 				ExportTimeout: 10 * time.Second,
@@ -32,7 +32,7 @@ func TestConfigApplyDefaults(t *testing.T) {
 			expected: Config{
 				Enabled:       true,
 				Endpoint:      "http://localhost:4318",
-				Exporter:      "http",
+				Protocol:      "http",
 				ServiceName:   constant.DefaultServiceName,
 				SampleRatio:   1.0,
 				ExportTimeout: 10 * time.Second,
@@ -43,8 +43,8 @@ func TestConfigApplyDefaults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.input.ApplyDefaults()
-			if result.Exporter != tt.expected.Exporter {
-				t.Errorf("Exporter: got %q, want %q", result.Exporter, tt.expected.Exporter)
+			if result.Protocol != tt.expected.Protocol {
+				t.Errorf("Protocol: got %q, want %q", result.Protocol, tt.expected.Protocol)
 			}
 			if result.ServiceName != tt.expected.ServiceName {
 				t.Errorf("ServiceName: got %q, want %q", result.ServiceName, tt.expected.ServiceName)
@@ -94,7 +94,7 @@ func TestConfigValidate(t *testing.T) {
 			config: Config{
 				Enabled:     true,
 				Endpoint:    "localhost:4317",
-				Exporter:    "grpc",
+				Protocol:    "grpc",
 				ServiceName: "test-service",
 			}.ApplyDefaults(),
 			wantErr: false,
@@ -104,7 +104,7 @@ func TestConfigValidate(t *testing.T) {
 			config: Config{
 				Enabled:     true,
 				Endpoint:    "localhost:4318",
-				Exporter:    "invalid",
+				Protocol:    "invalid",
 				ServiceName: "test-service",
 			},
 			wantErr: true,
