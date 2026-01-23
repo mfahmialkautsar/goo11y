@@ -400,7 +400,7 @@ func processRootDir() string {
 }
 
 func absoluteConsoleCallerFormatter(noColor bool) zerolog.Formatter {
-	return func(value interface{}) string {
+	return func(value any) string {
 		caller, _ := value.(string)
 		if caller == "" {
 			return ""

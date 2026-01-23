@@ -112,7 +112,7 @@ func TestLoggerWriterProps(t *testing.T) {
 	}
 
 	// Parse JSON from file
-	var fileMap map[string]interface{}
+	var fileMap map[string]any
 	if err := json.Unmarshal(content, &fileMap); err != nil {
 		t.Fatalf("failed to parse file json: %v", err)
 	}

@@ -215,14 +215,14 @@ func (e *Event) Timestamp() *Event {
 	return e
 }
 
-// Any adds an interface{} field.
-func (e *Event) Any(key string, val interface{}) *Event {
-	e.Event = e.Event.Interface(key, val)
+// Any adds an any field.
+func (e *Event) Any(key string, val any) *Event {
+	e.Event = e.Event.Any(key, val)
 	return e
 }
 
-// Interface adds an interface{} field.
-func (e *Event) Interface(key string, val interface{}) *Event {
+// Interface adds an any field.
+func (e *Event) Interface(key string, val any) *Event {
 	e.Event = e.Event.Interface(key, val)
 	return e
 }
@@ -287,7 +287,7 @@ func (e *Event) Discard() *Event {
 }
 
 // Fields is a helper to add multiple fields from a map or slice.
-func (e *Event) Fields(fields interface{}) *Event {
+func (e *Event) Fields(fields any) *Event {
 	e.Event = e.Event.Fields(fields)
 	return e
 }
@@ -311,7 +311,7 @@ func (e *Event) Stringers(key string, vals []fmt.Stringer) *Event {
 }
 
 // Type adds the field key with val's type using reflection.
-func (e *Event) Type(key string, val interface{}) *Event {
+func (e *Event) Type(key string, val any) *Event {
 	e.Event = e.Event.Type(key, val)
 	return e
 }

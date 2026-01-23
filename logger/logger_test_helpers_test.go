@@ -112,7 +112,7 @@ func assertStackHasFilePath(t *testing.T, frames []logStackFrame, file string) {
 	t.Fatalf("stack missing file %s in %v", want, frames)
 }
 
-func functionFile(fn interface{}) string {
+func functionFile(fn any) string {
 	value := reflect.ValueOf(fn)
 	if value.Kind() != reflect.Func {
 		panic("functionFile expects a function")
