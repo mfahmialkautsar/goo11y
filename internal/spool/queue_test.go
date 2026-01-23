@@ -159,14 +159,9 @@ func TestQueueRetryAllowsSubsequentPayloads(t *testing.T) {
 	attempts := make(map[string]int)
 	processed := make(chan string, 8)
 	done := make(chan struct{})
-	origBase := retryBaseDelay
-	origMax := retryMaxDelay
-	retryBaseDelay = 10 * time.Millisecond
-	retryMaxDelay = 20 * time.Millisecond
-	defer func() {
-		retryBaseDelay = origBase
-		retryMaxDelay = origMax
-	}()
+
+	queue.retryBase = 10 * time.Millisecond
+	queue.retryMax = 20 * time.Millisecond
 
 	queue.Start(ctx, func(ctx context.Context, payload []byte) error {
 		value := string(payload)
@@ -245,28 +240,21 @@ func TestQueueDropsAfterMaxAttemptsAndAge(t *testing.T) {
 	start := time.Now().Add(-8 * 24 * time.Hour)
 	var clock atomic.Value
 	clock.Store(start)
-	origNow := nowFn
-	nowFn = func() time.Time {
-		return clock.Load().(time.Time)
-	}
-	defer func() { nowFn = origNow }()
 
 	queue, err := New(dir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
+	queue.now = func() time.Time {
+		return clock.Load().(time.Time)
+	}
+	queue.retryBase = 5 * time.Millisecond
+	queue.retryMax = 20 * time.Millisecond
+
 	ctx := t.Context()
 
 	var attempts int32
-	origBase := retryBaseDelay
-	origMax := retryMaxDelay
-	retryBaseDelay = 5 * time.Millisecond
-	retryMaxDelay = 20 * time.Millisecond
-	defer func() {
-		retryBaseDelay = origBase
-		retryMaxDelay = origMax
-	}()
 	queue.Start(ctx, func(context.Context, []byte) error {
 		if atomic.AddInt32(&attempts, 1) == int32(maxRetryAttempts-1) {
 			clock.Store(start.Add(8 * 24 * time.Hour))
@@ -297,14 +285,12 @@ func TestQueueDropsAfterMaxAttemptsAndAge(t *testing.T) {
 
 func TestQueueDropsWhenFull(t *testing.T) {
 	dir := t.TempDir()
-	origLimit := queueMaxFiles
-	queueMaxFiles = 1
-	defer func() { queueMaxFiles = origLimit }()
 
 	queue, err := New(dir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	queue.maxFiles = 1
 
 	ctx := t.Context()
 

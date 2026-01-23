@@ -100,14 +100,12 @@ func TestCleanOldFilesTrimsOverflow(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	origLimit := queueMaxFiles
-	queueMaxFiles = 2
-	defer func() { queueMaxFiles = origLimit }()
 
 	queue, err := New(dir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	queue.maxFiles = 2
 
 	base := time.Now()
 	tokens := []fileToken{
@@ -131,8 +129,8 @@ func TestCleanOldFilesTrimsOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	if len(entries) != queueMaxFiles {
-		t.Fatalf("expected queue trimmed to %d entries, got %d", queueMaxFiles, len(entries))
+	if len(entries) != queue.maxFiles {
+		t.Fatalf("expected queue trimmed to %d entries, got %d", queue.maxFiles, len(entries))
 	}
 	for _, entry := range entries {
 		if entry.Name() == formatToken(tokens[0]) {
