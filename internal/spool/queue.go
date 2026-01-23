@@ -17,6 +17,7 @@ import (
 var (
 	ErrEmptyQueue = errors.New("spool: queue empty")
 	ErrCorrupt    = errors.New("spool: corrupt payload")
+	defaultNow    = time.Now
 )
 
 const (
@@ -30,13 +31,10 @@ const (
 	tokenSuffix       = ".spool"
 	tokenLegacyParts  = 2
 	tokenCurrentParts = 4
-)
 
-var (
-	queueMaxFiles  = 1000
-	retryBaseDelay = time.Second
-	retryMaxDelay  = time.Minute
-	nowFn          = time.Now
+	defaultQueueMaxFiles  = 1000
+	defaultRetryBaseDelay = time.Second
+	defaultRetryMaxDelay  = time.Minute
 )
 
 type Handler func(context.Context, []byte) error
@@ -56,6 +54,12 @@ type Queue struct {
 	notify      chan struct{}
 	counter     uint64
 	errorLogger ErrorLogger
+
+	// Configuration
+	maxFiles  int
+	retryBase time.Duration
+	retryMax  time.Duration
+	now       func() time.Time
 }
 
 type fileToken struct {
@@ -103,6 +107,10 @@ func NewWithErrorLogger(dir string, logger ErrorLogger) (*Queue, error) {
 		dir:         cleaned,
 		notify:      make(chan struct{}, notifierBuffer),
 		errorLogger: logger,
+		maxFiles:    defaultQueueMaxFiles,
+		retryBase:   defaultRetryBaseDelay,
+		retryMax:    defaultRetryMaxDelay,
+		now:         defaultNow,
 	}, nil
 }
 
@@ -114,7 +122,7 @@ func (q *Queue) Enqueue(payload []byte) (string, error) {
 		q.logError(fmt.Errorf("spool: cleanup warning: %w", err))
 	}
 
-	now := nowFn()
+	now := q.now()
 	seq := int(atomic.AddUint64(&q.counter, 1) % 1_000_000)
 	token := fileToken{
 		retryAt:   now,
@@ -416,11 +424,11 @@ func formatToken(token fileToken) string {
 }
 
 func (q *Queue) shouldDrop(token fileToken, queueLen int) bool {
-	if queueLen >= queueMaxFiles {
+	if queueLen >= q.maxFiles {
 		return true
 	}
 	if token.attempts+1 >= maxRetryAttempts {
-		if nowFn().Sub(token.createdAt) > staleAttemptAge {
+		if q.now().Sub(token.createdAt) > staleAttemptAge {
 			return true
 		}
 	}
@@ -430,8 +438,8 @@ func (q *Queue) shouldDrop(token fileToken, queueLen int) bool {
 func (q *Queue) scheduleRetry(token fileToken) error {
 	next := token
 	next.attempts++
-	delay := retryDelay(next.attempts)
-	next.retryAt = nowFn().Add(delay)
+	delay := q.retryDelay(next.attempts)
+	next.retryAt = q.now().Add(delay)
 	next.seq = int(atomic.AddUint64(&q.counter, 1) % 1_000_000)
 	newName := formatToken(next)
 	oldPath := filepath.Join(q.dir, token.name)
@@ -443,22 +451,22 @@ func (q *Queue) scheduleRetry(token fileToken) error {
 	return nil
 }
 
-func retryDelay(attempts int) time.Duration {
+func (q *Queue) retryDelay(attempts int) time.Duration {
 	if attempts <= 0 {
 		attempts = 1
 	}
-	delay := retryBaseDelay
+	delay := q.retryBase
 	for i := 1; i < attempts; i++ {
 		delay *= 2
-		if delay >= retryMaxDelay {
-			return retryMaxDelay
+		if delay >= q.retryMax {
+			return q.retryMax
 		}
 	}
-	if delay < retryBaseDelay {
-		return retryBaseDelay
+	if delay < q.retryBase {
+		return q.retryBase
 	}
-	if delay > retryMaxDelay {
-		return retryMaxDelay
+	if delay > q.retryMax {
+		return q.retryMax
 	}
 	return delay
 }
@@ -473,7 +481,7 @@ func (q *Queue) cleanOldFiles() error {
 	}
 
 	sortTokens(tokens)
-	now := nowFn()
+	now := q.now()
 	removed := 0
 	for _, token := range tokens {
 		if token.attempts >= maxRetryAttempts && now.Sub(token.createdAt) > staleAttemptAge {
@@ -489,15 +497,15 @@ func (q *Queue) cleanOldFiles() error {
 	if err != nil {
 		return err
 	}
-	if len(tokens) <= queueMaxFiles {
+	if len(tokens) <= q.maxFiles {
 		if removed > 0 {
-			q.logError(fmt.Errorf("cleaned %d spool files (buffer: %d, threshold: %d)", removed, len(tokens), queueMaxFiles))
+			q.logError(fmt.Errorf("cleaned %d spool files (buffer: %d, threshold: %d)", removed, len(tokens), q.maxFiles))
 		}
 		return nil
 	}
 
 	sortTokens(tokens)
-	excess := len(tokens) - queueMaxFiles
+	excess := len(tokens) - q.maxFiles
 	for i := range excess {
 		name := tokens[i].name
 		if err := q.Complete(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -508,7 +516,7 @@ func (q *Queue) cleanOldFiles() error {
 	}
 
 	if removed > 0 {
-		q.logError(fmt.Errorf("cleaned %d spool files (buffer: %d, threshold: %d)", removed, len(tokens), queueMaxFiles))
+		q.logError(fmt.Errorf("cleaned %d spool files (buffer: %d, threshold: %d)", removed, len(tokens), q.maxFiles))
 	}
 
 	return nil
