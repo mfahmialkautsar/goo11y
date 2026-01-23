@@ -18,8 +18,7 @@ func TestQueueRetriesUntilSuccess(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	var attempts int32
 	done := make(chan struct{})
@@ -33,7 +32,6 @@ func TestQueueRetriesUntilSuccess(t *testing.T) {
 			return fmt.Errorf("attempt %d failed", n)
 		}
 		close(done)
-		cancel()
 		return nil
 	})
 
@@ -75,13 +73,11 @@ func TestQueueDropsCorruptPayload(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	done := make(chan struct{})
 
 	queue.Start(ctx, func(context.Context, []byte) error {
-		cancel()
 		close(done)
 		return ErrCorrupt
 	})
@@ -157,8 +153,7 @@ func TestQueueRetryAllowsSubsequentPayloads(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	var mu sync.Mutex
 	attempts := make(map[string]int)
@@ -261,8 +256,7 @@ func TestQueueDropsAfterMaxAttemptsAndAge(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	var attempts int32
 	origBase := retryBaseDelay
@@ -312,8 +306,7 @@ func TestQueueDropsWhenFull(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	processed := make(chan struct{}, 1)
 	var failAttempts int32
@@ -325,7 +318,6 @@ func TestQueueDropsWhenFull(t *testing.T) {
 			return fmt.Errorf("fail")
 		case "ok":
 			processed <- struct{}{}
-			cancel()
 			return nil
 		default:
 			return nil
