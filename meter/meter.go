@@ -68,7 +68,6 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource, opts ...Opti
 
 	var (
 		reader sdkmetric.Reader
-		flush  func(context.Context) error
 	)
 
 	if c.reader != nil {
@@ -117,10 +116,8 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource, opts ...Opti
 		sdkmetric.WithResource(res),
 	)
 
-	if flush == nil {
-		flush = func(ctx context.Context) error {
-			return provider.ForceFlush(ctx)
-		}
+	flush := func(ctx context.Context) error {
+		return provider.ForceFlush(ctx)
 	}
 
 	otel.SetMeterProvider(provider)
