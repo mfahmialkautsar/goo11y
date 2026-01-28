@@ -32,7 +32,7 @@ func NewClientWithComponent(queueDir string, timeout time.Duration, component st
 		}
 		prefix := "[persistenthttp]"
 		if component != "" {
-			prefix = fmt.Sprintf("[%s/spool]", component)
+			prefix = "[" + component + "/spool]"
 		}
 		fmt.Fprintf(os.Stderr, "%s %v\n", prefix, err)
 	}))
