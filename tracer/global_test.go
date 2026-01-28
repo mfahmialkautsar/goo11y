@@ -56,12 +56,14 @@ func TestInitSetsGlobalTracer(t *testing.T) {
 func TestUseNilResetsGlobalTracer(t *testing.T) {
 	Use(nil)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic when accessing global tracer provider after Use(nil)")
-		}
-	}()
-	_ = Global()
+	provider := Global()
+	if provider == nil {
+		t.Fatal("expected disabled provider, got nil")
+	}
+
+	if err := provider.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown noop provider: %v", err)
+	}
 }
 
 func TestGlobalForceFlush(t *testing.T) {

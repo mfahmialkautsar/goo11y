@@ -10,6 +10,7 @@ import (
 )
 
 var globalProvider atomic.Value
+var disabledProvider = &Provider{}
 
 // Init configures the tracer provider and exposes it globally.
 func Init(ctx context.Context, cfg Config, res *resource.Resource, opts ...Option) error {
@@ -17,22 +18,29 @@ func Init(ctx context.Context, cfg Config, res *resource.Resource, opts ...Optio
 	if err != nil {
 		return err
 	}
+	if provider == nil {
+		provider = disabledProvider
+	}
 	Use(provider)
 	return nil
 }
 
 // Use replaces the global tracer provider with the supplied instance.
-// Passing nil reinstates a zero-value placeholder provider.
+// Passing nil installs a disabled noop provider.
 func Use(provider *Provider) {
+	if provider == nil {
+		provider = disabledProvider
+	}
 	globalProvider.Store(provider)
 }
 
 // Global returns the current global tracer provider.
+// Returns a disabled noop provider if not initialized.
 func Global() *Provider {
 	value := globalProvider.Load()
 	provider, ok := value.(*Provider)
 	if !ok || provider == nil {
-		panic("tracer: global provider not initialized - call tracer.Init() or tracer.Use() first")
+		return disabledProvider
 	}
 	return provider
 }
