@@ -35,25 +35,6 @@ func TestSetupDisabledTracer(t *testing.T) {
 	}
 }
 
-func TestSamplerFromRatioDescriptions(t *testing.T) {
-	tests := []struct {
-		ratio float64
-		want  string
-	}{
-		{-1, sdktrace.NeverSample().Description()},
-		{0, sdktrace.NeverSample().Description()},
-		{0.25, sdktrace.TraceIDRatioBased(0.25).Description()},
-		{1, sdktrace.AlwaysSample().Description()},
-		{2, sdktrace.AlwaysSample().Description()},
-	}
-
-	for _, tt := range tests {
-		if got := samplerFromRatio(tt.ratio).Description(); got != tt.want {
-			t.Fatalf("ratio %v: got %q, want %q", tt.ratio, got, tt.want)
-		}
-	}
-}
-
 func TestTracerDefaultsDisableSpool(t *testing.T) {
 	defaulted := Config{}.ApplyDefaults()
 	if defaulted.UseSpool {

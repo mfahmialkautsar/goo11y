@@ -98,9 +98,8 @@ func Setup(ctx context.Context, cfg Config, res *resource.Resource, opts ...Opti
 		exporter = wrapSpanExporter(exporter, "tracer", cfg.Protocol, grpcManager, httpClient)
 	}
 
-	sam := samplerFromRatio(cfg.SampleRatio)
 	options := []sdktrace.TracerProviderOption{
-		sdktrace.WithSampler(sam),
+		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(cfg.SampleRatio)),
 		sdktrace.WithResource(res),
 	}
 
