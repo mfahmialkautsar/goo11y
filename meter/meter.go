@@ -134,6 +134,9 @@ func (p *Provider) RegisterRuntimeMetrics(ctx context.Context, cfg RuntimeConfig
 	if !cfg.Enabled {
 		return nil
 	}
+	if p.meter == nil {
+		return nil
+	}
 	return registerRuntimeInstruments(ctx, p.meter)
 }
 
@@ -155,7 +158,6 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 }
 
 // ForceFlush ensures metrics are exported immediately.
-// No-op if provider is disabled.
 func (p *Provider) ForceFlush(ctx context.Context) error {
 	if p.flush == nil {
 		return nil

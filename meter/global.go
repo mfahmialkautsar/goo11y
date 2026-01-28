@@ -10,6 +10,7 @@ import (
 )
 
 var globalProvider atomic.Value
+var disabledProvider = &Provider{}
 
 // Init configures the meter provider and stores it as the package-level singleton.
 func Init(ctx context.Context, cfg Config, res *resource.Resource, opts ...Option) error {
@@ -17,24 +18,33 @@ func Init(ctx context.Context, cfg Config, res *resource.Resource, opts ...Optio
 	if err != nil {
 		return err
 	}
+	if provider == nil {
+		provider = disabledProvider
+	}
 	Use(provider)
 	return nil
 }
 
 // Use replaces the global meter provider with the supplied instance.
-// Passing nil installs a no-op placeholder.
+// Passing nil installs a disabled noop provider.
 func Use(provider *Provider) {
+	if provider == nil {
+		provider = disabledProvider
+	}
 	globalProvider.Store(provider)
 }
 
 // Global returns the current global meter provider pointer.
-// Panics if provider has not been initialized via Init() or Use().
+// Returns a disabled noop provider if not initialized.
 func Global() *Provider {
 	value := globalProvider.Load()
 	if value == nil {
-		panic("meter: global provider not initialized - call meter.Init() or meter.Use() first")
+		return disabledProvider
 	}
 	provider := value.(*Provider)
+	if provider == nil {
+		return disabledProvider
+	}
 	return provider
 }
 

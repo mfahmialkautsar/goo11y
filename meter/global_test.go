@@ -67,11 +67,10 @@ func TestUseNilResetsGlobalMeter(t *testing.T) {
 
 	provider := Global()
 	if provider == nil {
-		t.Log("global provider is nil (typed-nil placeholder); skipping shutdown check")
-		return
+		t.Fatal("expected disabled provider, got nil")
 	}
 
-	if err := Shutdown(context.Background()); err != nil {
+	if err := provider.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown noop provider: %v", err)
 	}
 }
