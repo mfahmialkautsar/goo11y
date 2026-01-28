@@ -102,13 +102,13 @@ func newPyroscopeTelemetryLogger(log *logger.Logger) pyroscopeTelemetryLogger {
 }
 
 func (l pyroscopeTelemetryLogger) Infof(format string, args ...any) {
-	l.log.Info().Msg(fmt.Sprintf(format, args...))
+	l.log.Info().Msgf(format, args...)
 }
 
 func (l pyroscopeTelemetryLogger) Debugf(format string, args ...any) {
-	l.log.Debug().Msg(fmt.Sprintf(format, args...))
+	l.log.Debug().Msgf(format, args...)
 }
 
 func (l pyroscopeTelemetryLogger) Errorf(format string, args ...any) {
-	l.log.Error().Msg(fmt.Sprintf(format, args...))
+	l.log.Error().Msgf(format, args...)
 }
