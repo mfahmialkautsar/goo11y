@@ -145,13 +145,12 @@ func TestGlobalLoggerAddsSpanEvents(t *testing.T) {
 func TestGlobalInitializesWhenUnconfigured(t *testing.T) {
 	globalLogger.Store(nil)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic when global logger uninitialized")
-		}
-	}()
+	log := Global()
+	if log == nil {
+		t.Fatal("expected disabled logger, got nil")
+	}
 
-	Global()
+	log.Info().Msg("this should be a no-op")
 }
 
 func TestGlobalErrorIncludesStackTrace(t *testing.T) {

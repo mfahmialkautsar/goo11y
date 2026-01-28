@@ -8,6 +8,12 @@ import (
 )
 
 var globalLogger atomic.Pointer[Logger]
+var disabledLogger = newDisabledLogger()
+
+func newDisabledLogger() *Logger {
+	nop := zerolog.Nop()
+	return &Logger{Logger: &nop}
+}
 
 // Init constructs a logger using New and makes it globally available via package-level helpers.
 func Init(ctx context.Context, cfg Config) error {
@@ -15,21 +21,28 @@ func Init(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	if log == nil {
+		log = disabledLogger
+	}
 	Use(log)
 	return nil
 }
 
 // Use replaces the global logger instance with the provided implementation.
+// Passing nil installs a disabled noop logger.
 func Use(log *Logger) {
+	if log == nil {
+		log = disabledLogger
+	}
 	globalLogger.Store(log)
 }
 
 // Global returns the current global logger reference.
-// Panics if logger has not been initialized via Init() or Use().
+// Returns a disabled noop logger if not initialized.
 func Global() *Logger {
 	logger := globalLogger.Load()
 	if logger == nil {
-		panic("logger: global logger not initialized - call logger.Init() or logger.Use() first")
+		return disabledLogger
 	}
 	return logger
 }
