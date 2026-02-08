@@ -18,7 +18,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
 )
 
-const (
+var (
 	traceIDField   = "trace_id"
 	spanIDField    = "span_id"
 	warnEventName  = "log.warn"
@@ -42,6 +42,30 @@ func StandardizeKey(key string) string {
 	return strings.ReplaceAll(key, ".", "_")
 }
 
+func applyFields(f FieldConfig) {
+	if f.TraceID != "" {
+		traceIDField = f.TraceID
+	}
+	if f.SpanID != "" {
+		spanIDField = f.SpanID
+	}
+	if f.Internal.WarnEvent != "" {
+		warnEventName = f.Internal.WarnEvent
+	}
+	if f.Internal.ErrorEvent != "" {
+		errorEventName = f.Internal.ErrorEvent
+	}
+	if f.Internal.EventMessageAttr != "" {
+		LogMessageKey = f.Internal.EventMessageAttr
+	}
+	if f.ServiceName != "" {
+		ServiceNameKey = f.ServiceName
+	}
+	if f.DeploymentEnvironment != "" {
+		DeploymentEnvironmentNameKey = f.DeploymentEnvironment
+	}
+}
+
 // Logger wraps zerolog.Logger with trace metadata injection and resource management.
 type Logger struct {
 	*zerolog.Logger
@@ -59,6 +83,8 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
+
+	applyFields(cfg.Fields)
 
 	zerolog.TimeFieldFormat = defaultConsoleTimeFormat
 	zerolog.ErrorStackMarshaler = marshalStackTrace
