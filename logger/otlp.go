@@ -12,6 +12,7 @@ import (
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	"github.com/mfahmialkautsar/goo11y/internal/persistentgrpc"
 	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
+	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -303,17 +304,17 @@ func buildRecord(entry []byte) (otelLog.Record, trace.SpanContext) {
 		return record, spanCtx
 	}
 
-	if ts, ok := payload["time"].(string); ok {
+	if ts, ok := payload[zerolog.TimestampFieldName].(string); ok {
 		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
 			record.SetTimestamp(parsed)
 		}
 	}
 
-	if msg, ok := payload["message"].(string); ok {
+	if msg, ok := payload[zerolog.MessageFieldName].(string); ok {
 		record.SetBody(otelLog.StringValue(msg))
 	}
 
-	if lvl, ok := payload["level"].(string); ok {
+	if lvl, ok := payload[zerolog.LevelFieldName].(string); ok {
 		severityText := strings.ToUpper(lvl)
 		record.SetSeverity(toSeverity(severityText))
 	}
@@ -363,7 +364,7 @@ func attributesFromPayload(payload map[string]any) []attribute.KeyValue {
 
 func skipField(key string) bool {
 	switch key {
-	case "time", "level", "message", traceIDField, spanIDField, ServiceNameKey, DeploymentEnvironmentNameKey:
+	case zerolog.TimestampFieldName, zerolog.LevelFieldName, zerolog.MessageFieldName, traceIDField, spanIDField, ServiceNameKey, DeploymentEnvironmentNameKey:
 		return true
 	default:
 		return false
