@@ -23,7 +23,26 @@ type Config struct {
 	Writers     []io.Writer
 	OTLP        OTLPConfig
 	File        FileConfig
+	Fields      FieldConfig
 	UseGlobal   bool
+}
+
+// FieldConfig allows customization of internal OTel-related field names.
+// Standard Zerolog fields (level, message, time, caller, error, stack)
+// should be configured via zerolog globals directly.
+type FieldConfig struct {
+	TraceID               string `default:"trace_id"`
+	SpanID                string `default:"span_id"`
+	ServiceName           string `default:"service_name"`
+	DeploymentEnvironment string `default:"deployment_environment_name"`
+	Internal              InternalFieldConfig
+}
+
+// InternalFieldConfig covers names for OTel span events and attributes.
+type InternalFieldConfig struct {
+	WarnEvent        string `default:"log.warn"`
+	ErrorEvent       string `default:"log.error"`
+	EventMessageAttr string `default:"log.message"`
 }
 
 // OTLPConfig captures OTLP export settings for log delivery.
