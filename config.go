@@ -58,11 +58,18 @@ func (c *Config) applyDefaults() {
 			*target = c.Resource.ServiceName
 		}
 	}
+	propageteEnvironment := func(target *string) {
+		if *target == "" {
+			*target = c.Resource.Environment
+		}
+	}
 
 	propagateServiceName(&c.Logger.ServiceName)
 	propagateServiceName(&c.Tracer.ServiceName)
 	propagateServiceName(&c.Meter.ServiceName)
 	propagateServiceName(&c.Profiler.ServiceName)
+
+	propageteEnvironment(&c.Logger.Environment)
 
 	c.Logger = c.Logger.ApplyDefaults()
 	c.Tracer = c.Tracer.ApplyDefaults()
