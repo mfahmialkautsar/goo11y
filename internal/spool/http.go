@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 )
 
 type HTTPRequest struct {
@@ -36,7 +38,14 @@ func HTTPHandler(client *http.Client) Handler {
 		if err := req.Unmarshal(payload); err != nil {
 			return ErrCorrupt
 		}
-		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL, bytes.NewReader(req.Body))
+		if !regexp.MustCompile(`^(http|https)://`).MatchString(req.URL) {
+			return ErrCorrupt
+		}
+		parsedURL, err := url.ParseRequestURI(req.URL)
+		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+			return ErrCorrupt
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, req.Method, parsedURL.String(), bytes.NewReader(req.Body))
 		if err != nil {
 			return err
 		}
@@ -45,7 +54,12 @@ func HTTPHandler(client *http.Client) Handler {
 				httpReq.Header.Add(key, value)
 			}
 		}
-		resp, err := client.Do(httpReq)
+		var resp *http.Response
+		if client.Transport != nil {
+			resp, err = client.Transport.RoundTrip(httpReq)
+		} else {
+			resp, err = http.DefaultTransport.RoundTrip(httpReq)
+		}
 		if err != nil {
 			return err
 		}
