@@ -2,6 +2,7 @@ package meter
 
 import (
 	"context"
+	"math"
 	"runtime"
 
 	"go.opentelemetry.io/otel/metric"
@@ -27,7 +28,13 @@ func registerRuntimeInstruments(_ context.Context, m metric.Meter) error {
 		metric.WithInt64Callback(func(_ context.Context, observer metric.Int64Observer) error {
 			var stats runtime.MemStats
 			runtime.ReadMemStats(&stats)
-			observer.Observe(int64(stats.HeapAlloc))
+			var val int64
+			if stats.HeapAlloc <= math.MaxInt64 {
+				val = int64(stats.HeapAlloc)
+			} else {
+				val = math.MaxInt64
+			}
+			observer.Observe(val)
 			return nil
 		}),
 	)
