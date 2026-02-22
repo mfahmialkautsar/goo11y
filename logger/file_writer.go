@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 )
@@ -155,14 +154,20 @@ func (w *dailyFileWriter) ensureFile(date string) error {
 		return fmt.Errorf("create log directory: %w", err)
 	}
 
-	path := filepath.Join(w.directory, date+".log")
-
 	if w.file != nil {
 		_ = w.file.Close()
 		w.file = nil
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, fileWriterFileMode)
+	root, err := os.OpenRoot(w.directory)
+	if err != nil {
+		return fmt.Errorf("open log directory root: %w", err)
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	file, err := root.OpenFile(date+".log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, fileWriterFileMode)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}

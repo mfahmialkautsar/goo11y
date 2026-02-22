@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -86,7 +87,7 @@ func NewWithErrorLogger(dir string, logger ErrorLogger) (*Queue, error) {
 		}
 	}
 
-	if err := os.MkdirAll(cleaned, 0o755); err != nil {
+	if err := os.MkdirAll(cleaned, 0o750); err != nil {
 		return nil, fmt.Errorf("spool: create dir: %w", err)
 	}
 
@@ -94,12 +95,20 @@ func NewWithErrorLogger(dir string, logger ErrorLogger) (*Queue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("spool: probe write: %w", err)
 	}
-	probeName := probe.Name()
+	probeName := filepath.Base(probe.Name())
+	root, err := os.OpenRoot(cleaned)
+	if err != nil {
+		return nil, fmt.Errorf("spool: open root: %w", err)
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
 	if cerr := probe.Close(); cerr != nil {
-		_ = os.Remove(probeName)
+		_ = root.Remove(probeName)
 		return nil, fmt.Errorf("spool: probe close: %w", cerr)
 	}
-	if err := os.Remove(probeName); err != nil {
+	if err := root.Remove(probeName); err != nil {
 		return nil, fmt.Errorf("spool: probe cleanup: %w", err)
 	}
 
@@ -347,12 +356,23 @@ func sortTokens(tokens []fileToken) {
 }
 
 func (q *Queue) readPayload(name string) ([]byte, error) {
-	path := filepath.Join(q.dir, name)
-	data, err := os.ReadFile(path)
+	root, err := os.OpenRoot(q.dir)
 	if err != nil {
 		return nil, err
 	}
-	return data, nil
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+
+	return io.ReadAll(f)
 }
 
 func parseToken(name string) (fileToken, error) {
