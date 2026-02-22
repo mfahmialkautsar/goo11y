@@ -9,8 +9,8 @@ import (
 type Credentials struct {
 	BasicUsername string
 	BasicPassword string
-	BearerToken   string
-	APIKey        string
+	BearerToken   string `json:"-"`
+	APIKey        string `json:"-"`
 	APIKeyHeader  string `default:"X-API-Key"`
 	Headers       map[string]string
 }
