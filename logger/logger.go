@@ -7,10 +7,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
-	"unsafe"
 
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	pkgerrors "github.com/pkg/errors"
@@ -333,10 +333,12 @@ func marshalStackTrace(err error) any {
 		}
 
 		ptr := errorPointer(current)
-		if _, seen := visited[ptr]; seen {
-			return
+		if ptr != 0 {
+			if _, seen := visited[ptr]; seen {
+				return
+			}
+			visited[ptr] = struct{}{}
 		}
-		visited[ptr] = struct{}{}
 
 		if unwrapper, ok := current.(interface{ Unwrap() []error }); ok {
 			for _, e := range unwrapper.Unwrap() {
@@ -388,7 +390,13 @@ func marshalStackTrace(err error) any {
 }
 
 func errorPointer(err error) uintptr {
-	return (*[2]uintptr)(unsafe.Pointer(&err))[1]
+	v := reflect.ValueOf(err)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		return v.Pointer()
+	default:
+		return 0
+	}
 }
 
 func captureProcessRoot() string {
