@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -147,7 +148,9 @@ func (w *dailyFileWriter) ensureFile(date string) error {
 	defer w.mu.Unlock()
 
 	if w.currentDate == date && w.file != nil {
-		return nil
+		if _, err := os.Stat(filepath.Join(w.directory, date+".log")); err == nil {
+			return nil
+		}
 	}
 
 	if err := os.MkdirAll(w.directory, fileWriterDirMode); err != nil {
