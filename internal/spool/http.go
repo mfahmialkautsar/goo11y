@@ -34,32 +34,17 @@ func (h *HTTPRequest) Unmarshal(data []byte) error {
 
 func HTTPHandler(client *http.Client) Handler {
 	return func(ctx context.Context, payload []byte) (err error) {
-		var req HTTPRequest
-		if err := req.Unmarshal(payload); err != nil {
-			return ErrCorrupt
-		}
-		if !regexp.MustCompile(`^(http|https)://`).MatchString(req.URL) {
-			return ErrCorrupt
-		}
-		parsedURL, err := url.ParseRequestURI(req.URL)
-		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-			return ErrCorrupt
-		}
-		httpReq, err := http.NewRequestWithContext(ctx, req.Method, parsedURL.String(), bytes.NewReader(req.Body))
+		req, err := unmarshalAndValidateRequest(payload)
 		if err != nil {
 			return err
 		}
-		for key, values := range req.Header {
-			for _, value := range values {
-				httpReq.Header.Add(key, value)
-			}
+
+		httpReq, err := buildHTTPRequest(ctx, req)
+		if err != nil {
+			return err
 		}
-		var resp *http.Response
-		if client.Transport != nil {
-			resp, err = client.Transport.RoundTrip(httpReq)
-		} else {
-			resp, err = http.DefaultTransport.RoundTrip(httpReq)
-		}
+
+		resp, err := executeHTTPRequest(client, httpReq)
 		if err != nil {
 			return err
 		}
@@ -68,6 +53,7 @@ func HTTPHandler(client *http.Client) Handler {
 				err = closeErr
 			}
 		}()
+
 		if _, copyErr := io.Copy(io.Discard, resp.Body); copyErr != nil {
 			return copyErr
 		}
@@ -76,4 +62,39 @@ func HTTPHandler(client *http.Client) Handler {
 		}
 		return nil
 	}
+}
+
+func unmarshalAndValidateRequest(payload []byte) (*HTTPRequest, error) {
+	var req HTTPRequest
+	if err := req.Unmarshal(payload); err != nil {
+		return nil, ErrCorrupt
+	}
+	if !regexp.MustCompile(`^(http|https)://`).MatchString(req.URL) {
+		return nil, ErrCorrupt
+	}
+	parsedURL, err := url.ParseRequestURI(req.URL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return nil, ErrCorrupt
+	}
+	return &req, nil
+}
+
+func buildHTTPRequest(ctx context.Context, req *HTTPRequest) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL, bytes.NewReader(req.Body))
+	if err != nil {
+		return nil, err
+	}
+	for key, values := range req.Header {
+		for _, value := range values {
+			httpReq.Header.Add(key, value)
+		}
+	}
+	return httpReq, nil
+}
+
+func executeHTTPRequest(client *http.Client, httpReq *http.Request) (*http.Response, error) {
+	if client.Transport != nil {
+		return client.Transport.RoundTrip(httpReq)
+	}
+	return http.DefaultTransport.RoundTrip(httpReq)
 }
