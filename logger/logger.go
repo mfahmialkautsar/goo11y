@@ -331,6 +331,41 @@ func marshalStackTrace(err error) any {
 	walk(err)
 
 	if len(collected) == 0 {
+		pcs := make([]uintptr, 64)
+		n := runtime.Callers(0, pcs)
+		iter := runtime.CallersFrames(pcs[:n])
+		var skipping = true
+		for {
+			frame, more := iter.Next()
+			if skipping {
+				// skip zerolog, runtime, and our own logger files
+				if strings.Contains(frame.File, "github.com/rs/zerolog") ||
+					strings.Contains(frame.File, "runtime/") ||
+					strings.Contains(frame.Function, "runtime.Callers") ||
+					strings.HasSuffix(frame.File, "logger.go") ||
+					strings.HasSuffix(frame.File, "global.go") {
+					if !more {
+						break
+					}
+					continue
+				}
+				skipping = false
+			}
+
+			if frame.Function != "" || frame.File != "" {
+				key := fmt.Sprintf("%s|%s|%d", frame.Function, frame.File, frame.Line)
+				if _, exists := frameSeen[key]; !exists {
+					frameSeen[key] = struct{}{}
+					collected = append(collected, frame)
+				}
+			}
+			if !more {
+				break
+			}
+		}
+	}
+
+	if len(collected) == 0 {
 		return nil
 	}
 
