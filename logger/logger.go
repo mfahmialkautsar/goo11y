@@ -278,91 +278,10 @@ func marshalStackTrace(err error) any {
 	if err == nil {
 		return nil
 	}
-	var collected []runtime.Frame
-	frameSeen := make(map[string]struct{})
-	visited := make(map[uintptr]struct{})
-
-	var walk func(error)
-	walk = func(current error) {
-		if current == nil {
-			return
-		}
-
-		ptr := errorPointer(current)
-		if ptr != 0 {
-			if _, seen := visited[ptr]; seen {
-				return
-			}
-			visited[ptr] = struct{}{}
-		}
-
-		if unwrapper, ok := current.(interface{ Unwrap() []error }); ok {
-			for _, e := range unwrapper.Unwrap() {
-				walk(e)
-			}
-		} else if next := errors.Unwrap(current); next != nil {
-			walk(next)
-		}
-
-		if tracer, ok := current.(stackTracer); ok {
-			pcs := make([]uintptr, 0, len(tracer.StackTrace()))
-			for _, frame := range tracer.StackTrace() {
-				pcs = append(pcs, uintptr(frame)-1)
-			}
-			if len(pcs) > 0 {
-				iter := runtime.CallersFrames(pcs)
-				for {
-					frame, more := iter.Next()
-					if frame.Function != "" || frame.File != "" {
-						key := fmt.Sprintf("%s|%s|%d", frame.Function, frame.File, frame.Line)
-						if _, exists := frameSeen[key]; !exists {
-							frameSeen[key] = struct{}{}
-							collected = append(collected, frame)
-						}
-					}
-					if !more {
-						break
-					}
-				}
-			}
-		}
-	}
-
-	walk(err)
+	collected, frameSeen := collectFrames(err)
 
 	if len(collected) == 0 {
-		pcs := make([]uintptr, 64)
-		n := runtime.Callers(0, pcs)
-		iter := runtime.CallersFrames(pcs[:n])
-		var skipping = true
-		for {
-			frame, more := iter.Next()
-			if skipping {
-				// skip zerolog, runtime, and our own logger files
-				if strings.Contains(frame.File, "github.com/rs/zerolog") ||
-					strings.Contains(frame.File, "runtime/") ||
-					strings.Contains(frame.Function, "runtime.Callers") ||
-					strings.HasSuffix(frame.File, "logger.go") ||
-					strings.HasSuffix(frame.File, "global.go") {
-					if !more {
-						break
-					}
-					continue
-				}
-				skipping = false
-			}
-
-			if frame.Function != "" || frame.File != "" {
-				key := fmt.Sprintf("%s|%s|%d", frame.Function, frame.File, frame.Line)
-				if _, exists := frameSeen[key]; !exists {
-					frameSeen[key] = struct{}{}
-					collected = append(collected, frame)
-				}
-			}
-			if !more {
-				break
-			}
-		}
+		collected = collectCurrentCallstack(frameSeen)
 	}
 
 	if len(collected) == 0 {
@@ -378,6 +297,127 @@ func marshalStackTrace(err error) any {
 		result = append(result, entry)
 	}
 	return result
+}
+
+func collectFrames(err error) ([]runtime.Frame, map[string]struct{}) {
+	var collected []runtime.Frame
+	frameSeen := make(map[string]struct{})
+	visited := make(map[uintptr]struct{})
+
+	walk := createFrameWalker(&collected, frameSeen, visited)
+	walk(err)
+	return collected, frameSeen
+}
+
+func createFrameWalker(collected *[]runtime.Frame, frameSeen map[string]struct{}, visited map[uintptr]struct{}) func(error) {
+	var walk func(error)
+	walk = func(current error) {
+		if current == nil {
+			return
+		}
+
+		if shouldStopWalking(current, visited) {
+			return
+		}
+
+		handleUnwrap(current, walk)
+		handleTracer(current, collected, frameSeen)
+	}
+	return walk
+}
+
+func shouldStopWalking(current error, visited map[uintptr]struct{}) bool {
+	ptr := errorPointer(current)
+	if ptr != 0 {
+		if _, seen := visited[ptr]; seen {
+			return true
+		}
+		visited[ptr] = struct{}{}
+	}
+	return false
+}
+
+func handleUnwrap(current error, walk func(error)) {
+	if unwrapper, ok := current.(interface{ Unwrap() []error }); ok {
+		for _, e := range unwrapper.Unwrap() {
+			walk(e)
+		}
+	} else if next := errors.Unwrap(current); next != nil {
+		walk(next)
+	}
+}
+
+func handleTracer(current error, collected *[]runtime.Frame, frameSeen map[string]struct{}) {
+	if tracer, ok := current.(stackTracer); ok {
+		pcs := make([]uintptr, 0, len(tracer.StackTrace()))
+		for _, frame := range tracer.StackTrace() {
+			pcs = append(pcs, uintptr(frame)-1)
+		}
+		if len(pcs) > 0 {
+			processPCS(pcs, collected, frameSeen)
+		}
+	}
+}
+
+func processPCS(pcs []uintptr, collected *[]runtime.Frame, frameSeen map[string]struct{}) {
+	iter := runtime.CallersFrames(pcs)
+	for {
+		frame, more := iter.Next()
+		if frame.Function != "" || frame.File != "" {
+			key := fmt.Sprintf("%s|%s|%d", frame.Function, frame.File, frame.Line)
+			if _, exists := frameSeen[key]; !exists {
+				frameSeen[key] = struct{}{}
+				*collected = append(*collected, frame)
+			}
+		}
+		if !more {
+			break
+		}
+	}
+}
+
+func collectCurrentCallstack(frameSeen map[string]struct{}) []runtime.Frame {
+	var collected []runtime.Frame
+	pcs := make([]uintptr, 64)
+	n := runtime.Callers(0, pcs)
+	iter := runtime.CallersFrames(pcs[:n])
+	skipping := true
+	for {
+		frame, more := iter.Next()
+		if skipping {
+			if isSkippedFrame(frame) {
+				if !more {
+					break
+				}
+				continue
+			}
+			skipping = false
+		}
+
+		if frame.Function != "" || frame.File != "" {
+			addFrameIfNew(frame, &collected, frameSeen)
+		}
+		if !more {
+			break
+		}
+	}
+	return collected
+}
+
+func addFrameIfNew(frame runtime.Frame, collected *[]runtime.Frame, frameSeen map[string]struct{}) {
+	key := fmt.Sprintf("%s|%s|%d", frame.Function, frame.File, frame.Line)
+	if _, exists := frameSeen[key]; !exists {
+		frameSeen[key] = struct{}{}
+		*collected = append(*collected, frame)
+	}
+}
+
+func isSkippedFrame(frame runtime.Frame) bool {
+	return strings.Contains(frame.File, "github.com/rs/zerolog") ||
+		strings.Contains(frame.File, "runtime/") ||
+		strings.Contains(frame.Function, "runtime.Callers") ||
+		strings.HasSuffix(frame.File, "logger.go") ||
+		strings.HasSuffix(frame.File, "global.go")
 }
 
 func errorPointer(err error) uintptr {
