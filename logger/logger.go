@@ -170,53 +170,42 @@ func (l *Logger) With() zerolog.Context {
 }
 
 // Debug opens a debug level event.
-func (l *Logger) Debug() *Event {
-	return &Event{Event: l.Logger.Debug()}
+func (l *Logger) Debug() *zerolog.Event {
+	return l.Logger.Debug()
 }
 
 // Info opens an info level event.
-func (l *Logger) Info() *Event {
-	return &Event{Event: l.Logger.Info()}
+func (l *Logger) Info() *zerolog.Event {
+	return l.Logger.Info()
 }
 
 // Warn opens a warn level event.
-func (l *Logger) Warn() *Event {
-	return &Event{Event: l.Logger.Warn()}
+func (l *Logger) Warn() *zerolog.Event {
+	return l.Logger.Warn()
 }
 
 // Error opens an error level event.
-func (l *Logger) Error() *Event {
-	return &Event{Event: l.Logger.Error().Stack()}
+func (l *Logger) Error() *zerolog.Event {
+	return l.Logger.Error().Stack()
 }
 
 // Fatal opens a fatal level event.
-func (l *Logger) Fatal() *Event {
-	return &Event{Event: l.Logger.Fatal().Stack()}
+func (l *Logger) Fatal() *zerolog.Event {
+	return l.Logger.Fatal().Stack()
 }
 
 // Err opens an error level event with the given error wrapped with stack trace.
-func (l *Logger) Err(err error) *Event {
-	err = ensureStack(err, 1)
-	return &Event{Event: l.Logger.Error().Stack().Err(err)}
+func (l *Logger) Err(err error) *zerolog.Event {
+	return l.Logger.Error().Stack().Err(err)
 }
 
 // WithLevel opens an event at the specified level.
-func (l *Logger) WithLevel(level zerolog.Level) *Event {
+func (l *Logger) WithLevel(level zerolog.Level) *zerolog.Event {
 	event := l.Logger.WithLevel(level)
 	if level >= zerolog.ErrorLevel {
 		event = event.Stack()
 	}
-	return &Event{Event: event}
-}
-
-func ensureStack(err error, skip int) error {
-	if err == nil {
-		return nil
-	}
-	if _, ok := err.(stackTracer); ok {
-		return err
-	}
-	return withStackSkip(err, skip+1)
+	return event
 }
 
 func exportFailureLogger(logger *Logger) func(component, transport string, err error) {
@@ -264,39 +253,6 @@ func failureExclusions(component, transport string) []string {
 
 type stackTracer interface {
 	StackTrace() pkgerrors.StackTrace
-}
-
-type stackError struct {
-	err   error
-	stack []uintptr
-}
-
-func (e *stackError) Error() string {
-	return e.err.Error()
-}
-
-func (e *stackError) Unwrap() error {
-	return e.err
-}
-
-func (e *stackError) StackTrace() pkgerrors.StackTrace {
-	frames := make([]pkgerrors.Frame, len(e.stack))
-	for i, pc := range e.stack {
-		frames[i] = pkgerrors.Frame(pc)
-	}
-	return frames
-}
-
-func withStackSkip(err error, skip int) error {
-	const depth = 32
-	var pcs [depth]uintptr
-	n := runtime.Callers(skip+2, pcs[:])
-	if n == 0 {
-		return &stackError{err: err, stack: nil}
-	}
-	stack := make([]uintptr, n)
-	copy(stack, pcs[:n])
-	return &stackError{err: err, stack: stack}
 }
 
 func callerLocationFormatter(_ uintptr, file string, line int) string {
