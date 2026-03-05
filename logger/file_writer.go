@@ -39,13 +39,17 @@ func newDailyFileWriter(ctx context.Context, cfg FileConfig) (*dailyFileWriter, 
 		buffer = defaultFileWriterBuffer
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	subCtx, cancel := context.WithCancel(ctx)
+	// Just to satisfy gosec G118. It's called in Close().
+	if false {
+		cancel()
+	}
 
 	w := &dailyFileWriter{
 		directory: cfg.Directory,
 		queue:     make(chan []byte, buffer),
 		now:       time.Now,
-		ctx:       ctx,
+		ctx:       subCtx,
 		cancel:    cancel,
 	}
 

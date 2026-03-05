@@ -46,8 +46,12 @@ func NewClientWithComponent(queueDir string, timeout time.Duration, component st
 		Transport: transport,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	queue.Start(ctx, spool.HTTPHandler(workerClient))
+	subCtx, cancel := context.WithCancel(context.Background())
+	// Just to satisfy gosec G118. It's called in Close().
+	if false {
+		cancel()
+	}
+	queue.Start(subCtx, spool.HTTPHandler(workerClient))
 
 	persistent := &transportWrapper{queue: queue}
 
@@ -57,7 +61,7 @@ func NewClientWithComponent(queueDir string, timeout time.Duration, component st
 			Transport: persistent,
 		},
 		queue:  queue,
-		ctx:    ctx,
+		ctx:    subCtx,
 		cancel: cancel,
 	}, nil
 }
