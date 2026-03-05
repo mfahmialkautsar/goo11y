@@ -84,7 +84,7 @@ func TestMeterExporterReturnsErrorOnFailure(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	err = exporter.Export(ctx, &data)

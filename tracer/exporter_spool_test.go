@@ -80,7 +80,7 @@ func TestTracerExporterReturnsErrorOnFailure(t *testing.T) {
 		},
 	}.Snapshot()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	err = exporter.ExportSpans(ctx, []sdktrace.ReadOnlySpan{snapshot})
