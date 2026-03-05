@@ -183,72 +183,91 @@ func (q *Queue) loop(ctx context.Context, handler Handler) {
 		default:
 		}
 
-		token, count, err := q.oldest()
-		if err != nil {
-			if errors.Is(err, ErrEmptyQueue) {
-				if !q.wait(ctx) {
-					return
-				}
-				backoff = initialBackoff
-				continue
-			}
-			q.logError(fmt.Errorf("spool: fetch next: %w", err))
-			if !q.waitWithBackoff(ctx, backoff) {
-				return
-			}
-			backoff = nextBackoff(backoff)
-			continue
+		if !q.processNext(ctx, handler, &backoff) {
+			return
 		}
-
-		if delay := time.Until(token.retryAt); delay > 0 {
-			if !q.waitUntil(ctx, delay) {
-				return
-			}
-			backoff = initialBackoff
-			continue
-		}
-
-		payload, err := q.readPayload(token.name)
-		if err != nil {
-			q.logError(fmt.Errorf("spool: read payload for %s: %w", token.name, err))
-			if errors.Is(err, fs.ErrNotExist) {
-				backoff = initialBackoff
-				continue
-			}
-			if !q.waitWithBackoff(ctx, backoff) {
-				return
-			}
-			backoff = nextBackoff(backoff)
-			continue
-		}
-
-		if err := handler(ctx, payload); err != nil {
-			if errors.Is(err, ErrCorrupt) {
-				q.logError(fmt.Errorf("spool: corrupt payload in %s: %w", token.name, err))
-				_ = q.Complete(token.name)
-				backoff = initialBackoff
-				continue
-			}
-			q.logError(fmt.Errorf("spool: handler failed for %s: %w", token.name, err))
-			if q.shouldDrop(token, count) {
-				_ = q.Complete(token.name)
-			} else if err := q.scheduleRetry(token); err != nil {
-				q.logError(fmt.Errorf("spool: schedule retry for %s: %w", token.name, err))
-				if !q.waitWithBackoff(ctx, backoff) {
-					return
-				}
-				backoff = nextBackoff(backoff)
-				continue
-			}
-			backoff = initialBackoff
-			continue
-		}
-
-		if err := q.Complete(token.name); err != nil {
-			q.logError(err)
-		}
-		backoff = initialBackoff
 	}
+}
+
+func (q *Queue) processNext(ctx context.Context, handler Handler, backoff *time.Duration) bool {
+	token, count, err := q.oldest()
+	if err != nil {
+		return q.handleOldestError(ctx, err, backoff)
+	}
+
+	if delay := time.Until(token.retryAt); delay > 0 {
+		if !q.waitWithBackoff(ctx, delay) {
+			return false
+		}
+		*backoff = initialBackoff
+		return true
+	}
+
+	payload, err := q.readPayload(token.name)
+	if err != nil {
+		return q.handleReadError(ctx, token.name, err, backoff)
+	}
+
+	if err := handler(ctx, payload); err != nil {
+		return q.handleHandlerError(ctx, &token, count, err, backoff)
+	}
+
+	if err := q.Complete(token.name); err != nil {
+		q.logError(err)
+	}
+	*backoff = initialBackoff
+	return true
+}
+
+func (q *Queue) handleOldestError(ctx context.Context, err error, backoff *time.Duration) bool {
+	if errors.Is(err, ErrEmptyQueue) {
+		if !q.wait(ctx) {
+			return false
+		}
+		*backoff = initialBackoff
+		return true
+	}
+	q.logError(fmt.Errorf("spool: fetch next: %w", err))
+	if !q.waitWithBackoff(ctx, *backoff) {
+		return false
+	}
+	*backoff = nextBackoff(*backoff)
+	return true
+}
+
+func (q *Queue) handleReadError(ctx context.Context, name string, err error, backoff *time.Duration) bool {
+	q.logError(fmt.Errorf("spool: read payload for %s: %w", name, err))
+	if errors.Is(err, fs.ErrNotExist) {
+		*backoff = initialBackoff
+		return true
+	}
+	if !q.waitWithBackoff(ctx, *backoff) {
+		return false
+	}
+	*backoff = nextBackoff(*backoff)
+	return true
+}
+
+func (q *Queue) handleHandlerError(ctx context.Context, token *fileToken, count int, err error, backoff *time.Duration) bool {
+	if errors.Is(err, ErrCorrupt) {
+		q.logError(fmt.Errorf("spool: corrupt payload in %s: %w", token.name, err))
+		_ = q.Complete(token.name)
+		*backoff = initialBackoff
+		return true
+	}
+	q.logError(fmt.Errorf("spool: handler failed for %s: %w", token.name, err))
+	if q.shouldDrop(*token, count) {
+		_ = q.Complete(token.name)
+	} else if err := q.scheduleRetry(*token); err != nil {
+		q.logError(fmt.Errorf("spool: schedule retry for %s: %w", token.name, err))
+		if !q.waitWithBackoff(ctx, *backoff) {
+			return false
+		}
+		*backoff = nextBackoff(*backoff)
+		return true
+	}
+	*backoff = initialBackoff
+	return true
 }
 
 func (q *Queue) logError(err error) {
@@ -267,19 +286,6 @@ func (q *Queue) wait(ctx context.Context) bool {
 }
 
 func (q *Queue) waitWithBackoff(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	case <-q.notify:
-		return true
-	}
-}
-
-func (q *Queue) waitUntil(ctx context.Context, d time.Duration) bool {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
@@ -500,6 +506,24 @@ func (q *Queue) cleanOldFiles() error {
 		return nil
 	}
 
+	removedStale := q.removeStaleFiles(tokens)
+
+	tokens, err = q.listTokens()
+	if err != nil {
+		return err
+	}
+
+	removedOverflow := q.removeOverflowFiles(tokens)
+	removed := removedStale + removedOverflow
+
+	if removed > 0 {
+		q.logError(fmt.Errorf("cleaned %d spool files (buffer: %d, threshold: %d)", removed, len(tokens), q.maxFiles))
+	}
+
+	return nil
+}
+
+func (q *Queue) removeStaleFiles(tokens []fileToken) int {
 	sortTokens(tokens)
 	now := q.now()
 	removed := 0
@@ -512,19 +536,16 @@ func (q *Queue) cleanOldFiles() error {
 			}
 		}
 	}
+	return removed
+}
 
-	tokens, err = q.listTokens()
-	if err != nil {
-		return err
-	}
+func (q *Queue) removeOverflowFiles(tokens []fileToken) int {
 	if len(tokens) <= q.maxFiles {
-		if removed > 0 {
-			q.logError(fmt.Errorf("cleaned %d spool files (buffer: %d, threshold: %d)", removed, len(tokens), q.maxFiles))
-		}
-		return nil
+		return 0
 	}
 
 	sortTokens(tokens)
+	removed := 0
 	excess := len(tokens) - q.maxFiles
 	for i := range excess {
 		name := tokens[i].name
@@ -534,12 +555,7 @@ func (q *Queue) cleanOldFiles() error {
 			removed++
 		}
 	}
-
-	if removed > 0 {
-		q.logError(fmt.Errorf("cleaned %d spool files (buffer: %d, threshold: %d)", removed, len(tokens), q.maxFiles))
-	}
-
-	return nil
+	return removed
 }
 
 func (q *Queue) signal() {
