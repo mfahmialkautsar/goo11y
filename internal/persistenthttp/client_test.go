@@ -174,20 +174,13 @@ func TestTransportWrapperEnqueueError(t *testing.T) {
 	}
 }
 
-func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
-	queueDir := t.TempDir()
+type captured struct {
+	body   string
+	status int
+}
 
-	var fail atomic.Bool
-	fail.Store(true)
-
-	type captured struct {
-		body   string
-		status int
-	}
-
-	results := make(chan captured, 16)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func newFailingServer(t *testing.T, fail *atomic.Bool, results chan<- captured) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("ReadAll: %v", err)
@@ -202,6 +195,31 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 		w.WriteHeader(status)
 		results <- captured{body: string(data), status: status}
 	}))
+}
+
+func doTestPostRequest(t *testing.T, client *Client, url string, payload string) {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBufferString(payload))
+	if err != nil {
+		t.Fatalf("NewRequest %s: %v", payload, err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("client.Do %s: %v", payload, err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("resp.Body.Close %s: %v", payload, err)
+	}
+}
+
+func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
+	queueDir := t.TempDir()
+
+	var fail atomic.Bool
+	fail.Store(true)
+
+	results := make(chan captured, 16)
+
+	server := newFailingServer(t, &fail, results)
 	defer server.Close()
 
 	recorder := testutil.StartStderrRecorder(t)
@@ -212,17 +230,7 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	firstReq, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewBufferString("first"))
-	if err != nil {
-		t.Fatalf("NewRequest first: %v", err)
-	}
-	resp, err := client.Do(firstReq)
-	if err != nil {
-		t.Fatalf("client.Do first: %v", err)
-	}
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("resp.Body.Close: %v", err)
-	}
+	doTestPostRequest(t, client, server.URL, "first")
 
 	waitForQueueFiles(t, queueDir, func(n int) bool { return n > 0 })
 
@@ -232,17 +240,7 @@ func TestClientFailureDoesNotBlockNewRequests(t *testing.T) {
 
 	fail.Store(false)
 
-	secondReq, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewBufferString("second"))
-	if err != nil {
-		t.Fatalf("NewRequest second: %v", err)
-	}
-	resp2, err := client.Do(secondReq)
-	if err != nil {
-		t.Fatalf("client.Do second: %v", err)
-	}
-	if err := resp2.Body.Close(); err != nil {
-		t.Fatalf("resp2.Body.Close: %v", err)
-	}
+	doTestPostRequest(t, client, server.URL, "second")
 
 	secondDelivered := false
 	waitForResult(t, results, func(r captured) bool {
