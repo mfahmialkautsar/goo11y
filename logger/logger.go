@@ -23,11 +23,14 @@ var (
 	spanIDField    = "span_id"
 	warnEventName  = "log.warn"
 	errorEventName = "log.error"
-	LogMessageKey  = "log.message"
+// LogMessageKey is the key to use for the main string message in structured logs.
+	LogMessageKey = "log.message"
 )
 
 var (
-	ServiceNameKey               = StandardizeKey(string(semconv.ServiceNameKey))
+// ServiceNameKey is the standardized service name key.
+	ServiceNameKey = StandardizeKey(string(semconv.ServiceNameKey))
+// DeploymentEnvironmentNameKey is the standardized environment name key.
 	DeploymentEnvironmentNameKey = StandardizeKey(string(semconv.DeploymentEnvironmentNameKey))
 )
 
@@ -38,6 +41,7 @@ var (
 	processRootOnce sync.Once
 )
 
+// StandardizeKey standardizes a key string by replacing periods with underscores.
 func StandardizeKey(key string) string {
 	return strings.ReplaceAll(key, ".", "_")
 }

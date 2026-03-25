@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// Manager manages a persistent gRPC connection, spooling requests to disk if the connection fails.
 type Manager struct {
 	component   string
 	transport   string
@@ -36,6 +37,7 @@ type envelope struct {
 
 type bypassKey struct{}
 
+// NewManager creates a new Manager instance that spools requests to the specified queue directory.
 func NewManager(queueDir, component, transport, method string, newReq, newResp func() proto.Message) (*Manager, error) {
 	queue, err := spool.NewWithErrorLogger(queueDir, spool.ErrorLoggerFunc(func(err error) {
 		otlputil.LogExportFailure(component, transport, err)
@@ -64,6 +66,7 @@ func (m *Manager) start() {
 	})
 }
 
+// Stop shuts down the manager and stops spooling requests.
 func (m *Manager) Stop(context.Context) error {
 	if m.cancel != nil {
 		m.cancel()
@@ -71,6 +74,7 @@ func (m *Manager) Stop(context.Context) error {
 	return nil
 }
 
+// Interceptor returns a gRPC UnaryClientInterceptor that intercepts requests and spools them if the outgoing call fails.
 func (m *Manager) Interceptor() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		if m == nil {

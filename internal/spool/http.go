@@ -11,6 +11,7 @@ import (
 	"regexp"
 )
 
+// HTTPRequest represents a serialized HTTP request for queueing.
 type HTTPRequest struct {
 	Method string              `json:"method"`
 	URL    string              `json:"url"`
@@ -18,6 +19,7 @@ type HTTPRequest struct {
 	Body   []byte              `json:"body"`
 }
 
+// Marshal serializes the HTTPRequest into a JSON byte slice.
 func (h *HTTPRequest) Marshal() ([]byte, error) {
 	if h == nil {
 		return nil, fmt.Errorf("spool: nil http request")
@@ -25,6 +27,7 @@ func (h *HTTPRequest) Marshal() ([]byte, error) {
 	return json.Marshal(h)
 }
 
+// Unmarshal decodes a JSON byte slice into the HTTPRequest.
 func (h *HTTPRequest) Unmarshal(data []byte) error {
 	if h == nil {
 		return fmt.Errorf("spool: nil http request")
@@ -32,6 +35,7 @@ func (h *HTTPRequest) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, h)
 }
 
+// HTTPHandler returns a Handler that processes queued HTTP requests.
 func HTTPHandler(client *http.Client) Handler {
 	return func(ctx context.Context, payload []byte) (err error) {
 		req, err := unmarshalAndValidateRequest(payload)

@@ -13,6 +13,7 @@ import (
 	"github.com/mfahmialkautsar/goo11y/internal/spool"
 )
 
+// Client is an HTTP client that spools failed requests to disk and retries them later.
 type Client struct {
 	*http.Client
 	queue  *spool.Queue
@@ -21,10 +22,12 @@ type Client struct {
 	once   sync.Once
 }
 
+// NewClient creates a new Client instance that uses the given queue directory and timeout.
 func NewClient(queueDir string, timeout time.Duration) (*Client, error) {
 	return NewClientWithComponent(queueDir, timeout, "")
 }
 
+// NewClientWithComponent creates a new Client instance with a specific component name for logging.
 func NewClientWithComponent(queueDir string, timeout time.Duration, component string) (*Client, error) {
 	queue, err := spool.NewWithErrorLogger(queueDir, spool.ErrorLoggerFunc(func(err error) {
 		if err == nil {
@@ -66,6 +69,7 @@ func NewClientWithComponent(queueDir string, timeout time.Duration, component st
 	}, nil
 }
 
+// Close gracefully stops the background queue processing of the Client.
 func (c *Client) Close() error {
 	if c == nil {
 		return nil

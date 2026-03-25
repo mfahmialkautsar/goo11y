@@ -16,9 +16,11 @@ import (
 )
 
 var (
+	// ErrEmptyQueue is returned when attempting to pop from an empty queue.
 	ErrEmptyQueue = errors.New("spool: queue empty")
-	ErrCorrupt    = errors.New("spool: corrupt payload")
-	defaultNow    = time.Now
+	// ErrCorrupt is returned when a payload cannot be read or parsed properly.
+	ErrCorrupt = errors.New("spool: corrupt payload")
+	defaultNow = time.Now
 )
 
 const (
@@ -38,18 +40,23 @@ const (
 	defaultRetryMaxDelay  = time.Minute
 )
 
+// Handler represents a function that processes a dequeued payload.
 type Handler func(context.Context, []byte) error
 
+// ErrorLogger is used by the Queue to log internal errors.
 type ErrorLogger interface {
 	Log(error)
 }
 
+// ErrorLoggerFunc is an adapter to allow the use of ordinary functions as an ErrorLogger.
 type ErrorLoggerFunc func(error)
 
+// Log calls f(err).
 func (f ErrorLoggerFunc) Log(err error) {
 	f(err)
 }
 
+// Queue provides a disk-backed, reliable queue for delayed processing.
 type Queue struct {
 	dir         string
 	notify      chan struct{}
@@ -71,10 +78,12 @@ type fileToken struct {
 	attempts  int
 }
 
+// New creates a new Queue backed by the given directory.
 func New(dir string) (*Queue, error) {
 	return NewWithErrorLogger(dir, nil)
 }
 
+// NewWithErrorLogger creates a new Queue with a custom ErrorLogger.
 func NewWithErrorLogger(dir string, logger ErrorLogger) (*Queue, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("spool: queue dir is required")
@@ -123,6 +132,7 @@ func NewWithErrorLogger(dir string, logger ErrorLogger) (*Queue, error) {
 	}, nil
 }
 
+// Enqueue adds a payload to the queue.
 func (q *Queue) Enqueue(payload []byte) (string, error) {
 	if len(payload) == 0 {
 		return "", fmt.Errorf("spool: empty payload")
@@ -148,6 +158,7 @@ func (q *Queue) Enqueue(payload []byte) (string, error) {
 	return name, nil
 }
 
+// Complete removes a processed payload from the queue.
 func (q *Queue) Complete(token string) error {
 	if token == "" {
 		return nil
@@ -165,11 +176,13 @@ func (q *Queue) Complete(token string) error {
 	return nil
 }
 
+// Start begins processing the queue in the background using the given handler.
 func (q *Queue) Start(ctx context.Context, handler Handler) {
 	go q.loop(ctx, handler)
 	q.signal()
 }
 
+// Notify triggers the queue to process immediately.
 func (q *Queue) Notify() {
 	q.signal()
 }
