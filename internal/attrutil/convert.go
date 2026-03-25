@@ -25,6 +25,23 @@ func ToKeyValues(fields []any) []attribute.KeyValue {
 
 // FromValue converts an arbitrary value to an OpenTelemetry attribute.
 func FromValue(key string, value any) (attribute.KeyValue, bool) {
+	if attr, ok := fromStringLike(key, value); ok {
+		return attr, true
+	}
+	if attr, ok := fromInteger(key, value); ok {
+		return attr, true
+	}
+	if attr, ok := fromFloatOrBytes(key, value); ok {
+		return attr, true
+	}
+
+	if value == nil {
+		return attribute.String(key, ""), true
+	}
+	return attribute.String(key, fmt.Sprint(value)), true
+}
+
+func fromStringLike(key string, value any) (attribute.KeyValue, bool) {
 	switch v := value.(type) {
 	case string:
 		return attribute.String(key, v), true
@@ -34,6 +51,12 @@ func FromValue(key string, value any) (attribute.KeyValue, bool) {
 		return attribute.String(key, v.Error()), true
 	case bool:
 		return attribute.Bool(key, v), true
+	}
+	return attribute.KeyValue{}, false
+}
+
+func fromInteger(key string, value any) (attribute.KeyValue, bool) {
+	switch v := value.(type) {
 	case int:
 		return attribute.Int64(key, int64(v)), true
 	case int8:
@@ -54,18 +77,20 @@ func FromValue(key string, value any) (attribute.KeyValue, bool) {
 		return fromUnsigned(key, uint64(v))
 	case uint64:
 		return fromUnsigned(key, v)
+	}
+	return attribute.KeyValue{}, false
+}
+
+func fromFloatOrBytes(key string, value any) (attribute.KeyValue, bool) {
+	switch v := value.(type) {
 	case float32:
 		return attribute.Float64(key, float64(v)), true
 	case float64:
 		return attribute.Float64(key, v), true
 	case []byte:
 		return attribute.String(key, string(v)), true
-	default:
-		if value == nil {
-			return attribute.String(key, ""), true
-		}
-		return attribute.String(key, fmt.Sprint(value)), true
 	}
+	return attribute.KeyValue{}, false
 }
 
 func fromUnsigned(key string, value uint64) (attribute.KeyValue, bool) {

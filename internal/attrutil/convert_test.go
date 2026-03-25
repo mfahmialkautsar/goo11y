@@ -2,7 +2,6 @@ package attrutil
 
 import (
 	"errors"
-	"math"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -50,6 +49,39 @@ func TestToKeyValuesSkipsInvalidKeys(t *testing.T) {
 	}
 }
 
+func checkInt64Val(want int64) func(*testing.T, attribute.KeyValue) {
+	return func(t *testing.T, kv attribute.KeyValue) {
+		if kv.Value.AsInt64() != want {
+			t.Errorf("want %d, got %v", want, kv.Value.AsInt64())
+		}
+	}
+}
+
+func checkStringVal(want string) func(*testing.T, attribute.KeyValue) {
+	return func(t *testing.T, kv attribute.KeyValue) {
+		if kv.Value.AsString() != want {
+			t.Errorf("want %s, got %v", want, kv.Value.AsString())
+		}
+	}
+}
+
+func checkBoolVal(want bool) func(*testing.T, attribute.KeyValue) {
+	return func(t *testing.T, kv attribute.KeyValue) {
+		if kv.Value.AsBool() != want {
+			t.Errorf("want %v, got %v", want, kv.Value.AsBool())
+		}
+	}
+}
+
+func checkFloat64Range(min, max float64) func(*testing.T, attribute.KeyValue) {
+	return func(t *testing.T, kv attribute.KeyValue) {
+		f := kv.Value.AsFloat64()
+		if f < min || f > max {
+			t.Errorf("want between %v and %v, got %v", min, max, f)
+		}
+	}
+}
+
 func TestFromValueTypes(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -57,188 +89,24 @@ func TestFromValueTypes(t *testing.T) {
 		value any
 		check func(*testing.T, attribute.KeyValue)
 	}{
-		{
-			name:  "string",
-			key:   "str",
-			value: "hello",
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsString() != "hello" {
-					t.Errorf("want hello, got %v", kv.Value.AsString())
-				}
-			},
-		},
-		{
-			name:  "bool",
-			key:   "flag",
-			value: true,
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if !kv.Value.AsBool() {
-					t.Error("want true, got false")
-				}
-			},
-		},
-		{
-			name:  "int",
-			key:   "num",
-			value: int(42),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 42 {
-					t.Errorf("want 42, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "int8",
-			key:   "num",
-			value: int8(8),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 8 {
-					t.Errorf("want 8, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "int16",
-			key:   "num",
-			value: int16(16),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 16 {
-					t.Errorf("want 16, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "int32",
-			key:   "num",
-			value: int32(32),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 32 {
-					t.Errorf("want 32, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "int64",
-			key:   "num",
-			value: int64(64),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 64 {
-					t.Errorf("want 64, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "uint",
-			key:   "num",
-			value: uint(42),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 42 {
-					t.Errorf("want 42, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "uint8",
-			key:   "num",
-			value: uint8(8),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 8 {
-					t.Errorf("want 8, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "uint16",
-			key:   "num",
-			value: uint16(16),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 16 {
-					t.Errorf("want 16, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "uint32",
-			key:   "num",
-			value: uint32(32),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 32 {
-					t.Errorf("want 32, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "uint64_small",
-			key:   "num",
-			value: uint64(64),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsInt64() != 64 {
-					t.Errorf("want 64, got %v", kv.Value.AsInt64())
-				}
-			},
-		},
-		{
-			name:  "uint64_large",
-			key:   "num",
-			value: uint64(math.MaxUint64),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsString() != "18446744073709551615" {
-					t.Errorf("want 18446744073709551615, got %v", kv.Value.AsString())
-				}
-			},
-		},
-		{
-			name:  "float32",
-			key:   "num",
-			value: float32(3.14),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				f := kv.Value.AsFloat64()
-				if f < 3.13 || f > 3.15 {
-					t.Errorf("want ~3.14, got %v", f)
-				}
-			},
-		},
-		{
-			name:  "float64",
-			key:   "num",
-			value: float64(2.718),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				f := kv.Value.AsFloat64()
-				if f < 2.71 || f > 2.72 {
-					t.Errorf("want ~2.718, got %v", f)
-				}
-			},
-		},
-		{
-			name:  "bytes",
-			key:   "data",
-			value: []byte("binary"),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsString() != "binary" {
-					t.Errorf("want binary, got %v", kv.Value.AsString())
-				}
-			},
-		},
-		{
-			name:  "error",
-			key:   "err",
-			value: errors.New("boom"),
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsString() != "boom" {
-					t.Errorf("want boom, got %v", kv.Value.AsString())
-				}
-			},
-		},
-		{
-			name:  "nil",
-			key:   "null",
-			value: nil,
-			check: func(t *testing.T, kv attribute.KeyValue) {
-				if kv.Value.AsString() != "" {
-					t.Errorf("want empty string for nil, got %v", kv.Value.AsString())
-				}
-			},
-		},
+		{name: "string", key: "str", value: "hello", check: checkStringVal("hello")},
+		{name: "bool", key: "flag", value: true, check: checkBoolVal(true)},
+		{name: "int", key: "num", value: int(42), check: checkInt64Val(42)},
+		{name: "int8", key: "num", value: int8(8), check: checkInt64Val(8)},
+		{name: "int16", key: "num", value: int16(16), check: checkInt64Val(16)},
+		{name: "int32", key: "num", value: int32(32), check: checkInt64Val(32)},
+		{name: "int64", key: "num", value: int64(64), check: checkInt64Val(64)},
+		{name: "uint", key: "num", value: uint(42), check: checkInt64Val(42)},
+		{name: "uint8", key: "num", value: uint8(8), check: checkInt64Val(8)},
+		{name: "uint16", key: "num", value: uint16(16), check: checkInt64Val(16)},
+		{name: "uint32", key: "num", value: uint32(32), check: checkInt64Val(32)},
+		{name: "uint64_small", key: "num", value: uint64(64), check: checkInt64Val(64)},
+		{name: "uint64_large", key: "num", value: uint64(18446744073709551615), check: checkStringVal("18446744073709551615")},
+		{name: "float32", key: "num", value: float32(3.14), check: checkFloat64Range(3.13, 3.15)},
+		{name: "float64", key: "num", value: float64(2.718), check: checkFloat64Range(2.71, 2.72)},
+		{name: "bytes", key: "data", value: []byte("binary"), check: checkStringVal("binary")},
+		{name: "error", key: "err", value: errors.New("boom"), check: checkStringVal("boom")},
+		{name: "nil", key: "null", value: nil, check: checkStringVal("")},
 	}
 
 	for _, tt := range tests {
