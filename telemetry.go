@@ -69,113 +69,137 @@ func New(ctx context.Context, cfg Config, opts ...Option) (*Telemetry, error) {
 
 	tele := &Telemetry{}
 
-	if cfg.Logger.Enabled {
-		var (
-			log *logger.Logger
-			err error
-		)
-		if cfg.Logger.UseGlobal {
-			err = logger.Init(ctx, cfg.Logger)
-			if err != nil {
-				return nil, fmt.Errorf("setup logger: %w", err)
-			}
-			log = logger.Global()
-		} else {
-			log, err = logger.New(ctx, cfg.Logger)
-			if err != nil {
-				return nil, fmt.Errorf("setup logger: %w", err)
-			}
-			tele.shutdownHooks = append(tele.shutdownHooks, func(ctx context.Context) error {
-				return log.Close()
-			})
-		}
-		tele.Logger = log
+	if err := setupLogger(ctx, &cfg, tele); err != nil {
+		return nil, err
 	}
 
-	if cfg.Tracer.Enabled {
-		var (
-			provider *tracer.Provider
-			err      error
-		)
-		if cfg.Tracer.UseGlobal {
-			err = tracer.Init(ctx, cfg.Tracer, res, c.tracerOptions...)
-			if err != nil {
-				return nil, fmt.Errorf("setup tracer: %w", err)
-			}
-			provider = tracer.Global()
-		} else {
-			provider, err = tracer.Setup(ctx, cfg.Tracer, res, c.tracerOptions...)
-			if err != nil {
-				return nil, fmt.Errorf("setup tracer: %w", err)
-			}
-		}
-		tele.Tracer = provider
-		tele.shutdownHooks = append(tele.shutdownHooks, func(ctx context.Context) error {
-			return provider.Shutdown(ctx)
-		})
+	if err := setupTracer(ctx, &cfg, &c, tele, res); err != nil {
+		return nil, err
 	}
 
-	if cfg.Meter.Enabled {
-		var (
-			provider *meter.Provider
-			err      error
-		)
-		if cfg.Meter.UseGlobal {
-			err = meter.Init(ctx, cfg.Meter, res, c.meterOptions...)
-			if err != nil {
-				return nil, fmt.Errorf("setup meter: %w", err)
-			}
-			provider = meter.Global()
-		} else {
-			provider, err = meter.Setup(ctx, cfg.Meter, res, c.meterOptions...)
-			if err != nil {
-				return nil, fmt.Errorf("setup meter: %w", err)
-			}
-		}
-		tele.Meter = provider
-		tele.shutdownHooks = append(tele.shutdownHooks, func(ctx context.Context) error {
-			return provider.Shutdown(ctx)
-		})
-
-		if cfg.Meter.Runtime.Enabled {
-			var regErr error
-			if cfg.Meter.UseGlobal {
-				regErr = meter.RegisterRuntimeMetrics(ctx, cfg.Meter.Runtime)
-			} else {
-				regErr = provider.RegisterRuntimeMetrics(ctx, cfg.Meter.Runtime)
-			}
-			if regErr != nil {
-				tele.emitWarn(ctx, "register runtime metrics", regErr)
-			}
-		}
+	if err := setupMeter(ctx, &cfg, &c, tele, res); err != nil {
+		return nil, err
 	}
 
-	if cfg.Profiler.Enabled {
-		var (
-			controller *profiler.Controller
-			err        error
-		)
-		if cfg.Profiler.UseGlobal {
-			err = profiler.Init(cfg.Profiler, tele.Logger)
-			if err != nil {
-				return nil, fmt.Errorf("setup profiler: %w", err)
-			}
-			controller = profiler.Global()
-		} else {
-			controller, err = profiler.Setup(cfg.Profiler, tele.Logger)
-			if err != nil {
-				return nil, fmt.Errorf("setup profiler: %w", err)
-			}
-		}
-		tele.Profiler = controller
-		tele.shutdownHooks = append(tele.shutdownHooks, func(context.Context) error {
-			return controller.Stop()
-		})
+	if err := setupProfiler(&cfg, tele); err != nil {
+		return nil, err
 	}
 
 	tele.configureIntegrations(cfg)
 
 	return tele, nil
+}
+
+func setupLogger(ctx context.Context, cfg *Config, tele *Telemetry) error {
+	if !cfg.Logger.Enabled {
+		return nil
+	}
+	var log *logger.Logger
+	var err error
+	if cfg.Logger.UseGlobal {
+		err = logger.Init(ctx, cfg.Logger)
+		if err != nil {
+			return fmt.Errorf("setup logger: %w", err)
+		}
+		log = logger.Global()
+	} else {
+		log, err = logger.New(ctx, cfg.Logger)
+		if err != nil {
+			return fmt.Errorf("setup logger: %w", err)
+		}
+		tele.shutdownHooks = append(tele.shutdownHooks, func(ctx context.Context) error {
+			return log.Close()
+		})
+	}
+	tele.Logger = log
+	return nil
+}
+
+func setupTracer(ctx context.Context, cfg *Config, c *config, tele *Telemetry, res *resource.Resource) error {
+	if !cfg.Tracer.Enabled {
+		return nil
+	}
+	var provider *tracer.Provider
+	var err error
+	if cfg.Tracer.UseGlobal {
+		err = tracer.Init(ctx, cfg.Tracer, res, c.tracerOptions...)
+		if err != nil {
+			return fmt.Errorf("setup tracer: %w", err)
+		}
+		provider = tracer.Global()
+	} else {
+		provider, err = tracer.Setup(ctx, cfg.Tracer, res, c.tracerOptions...)
+		if err != nil {
+			return fmt.Errorf("setup tracer: %w", err)
+		}
+	}
+	tele.Tracer = provider
+	tele.shutdownHooks = append(tele.shutdownHooks, func(ctx context.Context) error {
+		return provider.Shutdown(ctx)
+	})
+	return nil
+}
+
+func setupMeter(ctx context.Context, cfg *Config, c *config, tele *Telemetry, res *resource.Resource) error {
+	if !cfg.Meter.Enabled {
+		return nil
+	}
+	var provider *meter.Provider
+	var err error
+	if cfg.Meter.UseGlobal {
+		err = meter.Init(ctx, cfg.Meter, res, c.meterOptions...)
+		if err != nil {
+			return fmt.Errorf("setup meter: %w", err)
+		}
+		provider = meter.Global()
+	} else {
+		provider, err = meter.Setup(ctx, cfg.Meter, res, c.meterOptions...)
+		if err != nil {
+			return fmt.Errorf("setup meter: %w", err)
+		}
+	}
+	tele.Meter = provider
+	tele.shutdownHooks = append(tele.shutdownHooks, func(ctx context.Context) error {
+		return provider.Shutdown(ctx)
+	})
+
+	if cfg.Meter.Runtime.Enabled {
+		var regErr error
+		if cfg.Meter.UseGlobal {
+			regErr = meter.RegisterRuntimeMetrics(ctx, cfg.Meter.Runtime)
+		} else {
+			regErr = provider.RegisterRuntimeMetrics(ctx, cfg.Meter.Runtime)
+		}
+		if regErr != nil {
+			tele.emitWarn(ctx, "register runtime metrics", regErr)
+		}
+	}
+	return nil
+}
+
+func setupProfiler(cfg *Config, tele *Telemetry) error {
+	if !cfg.Profiler.Enabled {
+		return nil
+	}
+	var controller *profiler.Controller
+	var err error
+	if cfg.Profiler.UseGlobal {
+		err = profiler.Init(cfg.Profiler, tele.Logger)
+		if err != nil {
+			return fmt.Errorf("setup profiler: %w", err)
+		}
+		controller = profiler.Global()
+	} else {
+		controller, err = profiler.Setup(cfg.Profiler, tele.Logger)
+		if err != nil {
+			return fmt.Errorf("setup profiler: %w", err)
+		}
+	}
+	tele.Profiler = controller
+	tele.shutdownHooks = append(tele.shutdownHooks, func(context.Context) error {
+		return controller.Stop()
+	})
+	return nil
 }
 
 // Shutdown gracefully tears down all initialized components.
