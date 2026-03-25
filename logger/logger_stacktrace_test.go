@@ -41,6 +41,26 @@ func TestErrorStackTraceStartsAtCaller(t *testing.T) {
 	}
 }
 
+func parseAndVerifyLogStack(t *testing.T, data []byte) ([]any, []logStackFrame, string) {
+	entry := decodeLogLine(t, data)
+	stack, ok := entry["stack"].([]any)
+	if !ok {
+		t.Fatalf("expected stack field, got %T", entry["stack"])
+	}
+	if len(stack) == 0 {
+		t.Fatalf("expected non-empty stack trace")
+	}
+
+	frames := decodeStackFrames(t, stack)
+	helperFile := functionFile(nestedOuterError)
+	assertStackHasFilePath(t, frames, helperFile)
+
+	if msg, ok := entry["error"].(string); !ok || !strings.Contains(msg, "nested boom") || !strings.Contains(msg, "outer failed") {
+		t.Fatalf("unexpected error field: %v", entry["error"])
+	}
+	return stack, frames, helperFile
+}
+
 func TestLoggerErrorIncludesStackTrace(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := Config{
@@ -62,31 +82,16 @@ func TestLoggerErrorIncludesStackTrace(t *testing.T) {
 	boom := nestedOuterError()
 	log.Error().Err(boom).Msg("stacked")
 
-	entry := decodeLogLine(t, buf.Bytes())
-	stack, ok := entry["stack"].([]any)
-	if !ok {
-		t.Fatalf("expected stack field, got %T", entry["stack"])
-	}
-	if len(stack) == 0 {
-		t.Fatalf("expected non-empty stack trace")
-	}
-	frames := decodeStackFrames(t, stack)
-	helperFile := functionFile(nestedOuterError)
-	assertStackHasFilePath(t, frames, helperFile)
-	outer := findStackFrame(t, frames, "nestedOuterError")
-	if filepath.Clean(outer.File) != helperFile {
-		t.Fatalf("unexpected outer frame file: %s", outer.File)
-	}
-	if outer.Function != "github.com/mfahmialkautsar/goo11y/logger.nestedOuterError" {
-		t.Fatalf("unexpected outer frame function: %s", outer.Function)
-	}
-	middle := findStackFrame(t, frames, "nestedMiddleError")
-	if filepath.Clean(middle.File) != helperFile {
-		t.Fatalf("unexpected middle frame file: %s", middle.File)
-	}
-	inner := findStackFrame(t, frames, "nestedInnerError")
-	if filepath.Clean(inner.File) != helperFile {
-		t.Fatalf("unexpected inner frame file: %s", inner.File)
+	stack, frames, helperFile := parseAndVerifyLogStack(t, buf.Bytes())
+
+	for _, fName := range []string{"nestedOuterError", "nestedMiddleError", "nestedInnerError"} {
+		f := findStackFrame(t, frames, fName)
+		if filepath.Clean(f.File) != helperFile {
+			t.Fatalf("unexpected %s frame file: %s", fName, f.File)
+		}
+		if fName == "nestedOuterError" && f.Function != "github.com/mfahmialkautsar/goo11y/logger.nestedOuterError" {
+			t.Fatalf("unexpected outer frame function: %s", f.Function)
+		}
 	}
 	funcs := stackFunctionNames(t, stack)
 	assertStackContains(t, funcs, "nestedInnerError")
@@ -101,10 +106,6 @@ func TestLoggerErrorIncludesStackTrace(t *testing.T) {
 	}
 	if innerIdx >= middleIdx || middleIdx >= outerIdx {
 		t.Errorf("stack order incorrect: inner@%d middle@%d outer@%d (expected inner < middle < outer)", innerIdx, middleIdx, outerIdx)
-	}
-
-	if msg, ok := entry["error"].(string); !ok || !strings.Contains(msg, "nested boom") || !strings.Contains(msg, "outer failed") {
-		t.Fatalf("unexpected error field: %v", entry["error"])
 	}
 }
 

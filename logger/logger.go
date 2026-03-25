@@ -23,14 +23,14 @@ var (
 	spanIDField    = "span_id"
 	warnEventName  = "log.warn"
 	errorEventName = "log.error"
-// LogMessageKey is the key to use for the main string message in structured logs.
+	// LogMessageKey is the key to use for the main string message in structured logs.
 	LogMessageKey = "log.message"
 )
 
 var (
-// ServiceNameKey is the standardized service name key.
+	// ServiceNameKey is the standardized service name key.
 	ServiceNameKey = StandardizeKey(string(semconv.ServiceNameKey))
-// DeploymentEnvironmentNameKey is the standardized environment name key.
+	// DeploymentEnvironmentNameKey is the standardized environment name key.
 	DeploymentEnvironmentNameKey = StandardizeKey(string(semconv.DeploymentEnvironmentNameKey))
 )
 
@@ -118,9 +118,8 @@ func New(ctx context.Context, cfg Config) (*Logger, error) {
 		otlpWriter, err := newOTLPWriter(ctx, cfg.OTLP, cfg.ServiceName, cfg.Environment)
 		if err != nil {
 			return nil, fmt.Errorf("setup otlp writer: %w", err)
-		} else {
-			fanout.add("otlp", otlpWriter)
 		}
+		fanout.add("otlp", otlpWriter)
 	}
 	if fanout.len() == 0 {
 		fanout.add("stdout", os.Stdout)

@@ -53,44 +53,23 @@ func TestLoggerEventFieldWriters(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if entry["strings"] == nil {
-		t.Fatal("expected strings field present")
+
+	expectedFields := []string{
+		"strings", "float32", "duration", "time", "diff",
+		"any", "iface", "bytes", "hex", "anerr", "errs",
 	}
+
+	for _, field := range expectedFields {
+		if entry[field] == nil {
+			t.Fatalf("expected %s field present", field)
+		}
+	}
+
 	if entry["int8"] != float64(8) {
 		t.Fatalf("expected int8 value 8, got %v", entry["int8"])
 	}
 	if entry["uint64"] != float64(64) {
 		t.Fatalf("expected uint64 value 64, got %v", entry["uint64"])
-	}
-	if entry["float32"] == nil {
-		t.Fatal("expected float32 field present")
-	}
-	if entry["duration"] == nil {
-		t.Fatal("expected duration field present")
-	}
-	if entry["time"] == nil {
-		t.Fatal("expected time field present")
-	}
-	if entry["diff"] == nil {
-		t.Fatal("expected diff field present")
-	}
-	if entry["any"] == nil {
-		t.Fatal("expected any field present")
-	}
-	if entry["iface"] == nil {
-		t.Fatal("expected iface field present")
-	}
-	if entry["bytes"] == nil {
-		t.Fatal("expected bytes field present")
-	}
-	if entry["hex"] == nil {
-		t.Fatal("expected hex field present")
-	}
-	if entry["anerr"] == nil {
-		t.Fatal("expected anerr field present")
-	}
-	if entry["errs"] == nil {
-		t.Fatal("expected errs field present")
 	}
 }
 
