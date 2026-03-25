@@ -144,7 +144,19 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		t.Fatalf("close logger: %v", err)
 	}
 
-	// Basic check for file existence and content
+	verifyFileLog(t, filePath)
+
+	// Verify Traces
+	if err := tele.ForceFlush(ctx); err != nil {
+		t.Fatalf("force flush: %v", err)
+	}
+	verifyTelemetryTraces(t, traceExporter, traceID, spanID, testCase)
+
+	// Verify Metrics
+	verifyTelemetryMetrics(t, ctx, meterReader, metricName, testCase, traceID, spanID)
+}
+
+func verifyFileLog(t *testing.T, filePath string) {
 	content, err := io.ReadAll(mustOpen(t, filePath))
 	if err != nil {
 		t.Fatalf("read log file: %v", err)
@@ -152,11 +164,9 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	if len(content) == 0 {
 		t.Fatal("log file is empty")
 	}
+}
 
-	// Verify Traces
-	if err := tele.ForceFlush(ctx); err != nil {
-		t.Fatalf("force flush: %v", err)
-	}
+func verifyTelemetryTraces(t *testing.T, traceExporter *tracetest.InMemoryExporter, traceID, spanID, testCase string) {
 	spans := inmemory.GetSpans(traceExporter)
 	foundSpan, ok := inmemory.FindSpanByName(spans, "telemetry-integration-span")
 	if !ok {
@@ -169,7 +179,6 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		t.Errorf("expected spanID %s, got %s", spanID, foundSpan.SpanContext.SpanID().String())
 	}
 
-	// Verify Span Attributes
 	attrs := make(map[string]string)
 	for _, kv := range foundSpan.Attributes {
 		attrs[string(kv.Key)] = kv.Value.AsString()
@@ -177,8 +186,9 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	if v, ok := attrs["test_case"]; !ok || v != testCase {
 		t.Errorf("expected attribute test_case=%s, got %s", testCase, v)
 	}
+}
 
-	// Verify Metrics
+func verifyTelemetryMetrics(t *testing.T, ctx context.Context, meterReader *sdkmetric.ManualReader, metricName, testCase, traceID, spanID string) {
 	rm, err := inmemory.GetMetrics(ctx, meterReader)
 	if err != nil {
 		t.Fatalf("get metrics: %v", err)
@@ -200,7 +210,6 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		t.Errorf("expected metric value 1, got %v", dp.Value)
 	}
 
-	// Verify Metric Attributes
 	metricAttrs := make(map[string]string)
 	for _, kv := range dp.Attributes.ToSlice() {
 		metricAttrs[string(kv.Key)] = kv.Value.AsString()
@@ -214,7 +223,6 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 	if v, ok := metricAttrs["span_id"]; !ok || v != spanID {
 		t.Errorf("expected metric attribute span_id=%s, got %s", spanID, v)
 	}
-
 }
 
 func mustOpen(t *testing.T, path string) *os.File {

@@ -135,23 +135,29 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 
 	span.End()
 
-	// Verify Log
-	if !strings.Contains(logBuf.String(), logMessage) {
-		t.Fatalf("log message not found in buffer: %s", logBuf.String())
-	}
-	if !strings.Contains(logBuf.String(), traceID) {
-		t.Fatalf("traceID not found in log: %s", logBuf.String())
-	}
-	if !strings.Contains(logBuf.String(), spanID) {
-		t.Fatalf("spanID not found in log: %s", logBuf.String())
-	}
-
 	// Force flush to ensure spans are exported
 	if err := tele.ForceFlush(ctx); err != nil {
 		t.Fatalf("force flush: %v", err)
 	}
 
-	// Verify Traces
+	verifyGlobalLog(t, logBuf.String(), logMessage, traceID, spanID)
+	verifyGlobalTraces(t, traceExporter, traceID)
+	verifyGlobalMetrics(t, ctx, meterReader, metricName)
+}
+
+func verifyGlobalLog(t *testing.T, logStr, logMessage, traceID, spanID string) {
+	if !strings.Contains(logStr, logMessage) {
+		t.Fatalf("log message not found in buffer: %s", logStr)
+	}
+	if !strings.Contains(logStr, traceID) {
+		t.Fatalf("traceID not found in log: %s", logStr)
+	}
+	if !strings.Contains(logStr, spanID) {
+		t.Fatalf("spanID not found in log: %s", logStr)
+	}
+}
+
+func verifyGlobalTraces(t *testing.T, traceExporter *tracetest.InMemoryExporter, traceID string) {
 	spans := inmemory.GetSpans(traceExporter)
 	foundSpan, ok := inmemory.FindSpanByName(spans, "global-telemetry-span")
 	if !ok {
@@ -160,8 +166,9 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 	if foundSpan.SpanContext.TraceID().String() != traceID {
 		t.Errorf("expected traceID %s, got %s", traceID, foundSpan.SpanContext.TraceID().String())
 	}
+}
 
-	// Verify Metrics
+func verifyGlobalMetrics(t *testing.T, ctx context.Context, meterReader *sdkmetric.ManualReader, metricName string) {
 	rm, err := inmemory.GetMetrics(ctx, meterReader)
 	if err != nil {
 		t.Fatalf("get metrics: %v", err)
