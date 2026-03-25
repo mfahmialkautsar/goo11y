@@ -146,6 +146,40 @@ func TestQueueProcessesPersistedEntries(t *testing.T) {
 	}
 }
 
+func waitForFailAttempts(t *testing.T, getCount func() int) {
+	deadline := time.After(time.Second)
+	for {
+		count := getCount()
+		if count >= 3 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected failing payload to retry, saw %d attempts", count)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func waitAndAssertProcessedEvents(t *testing.T, processed <-chan string) {
+	firstTwo := make([]string, 0, 2)
+	for len(firstTwo) < 2 {
+		select {
+		case entry := <-processed:
+			firstTwo = append(firstTwo, entry)
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("timed out collecting processed entries: %v", firstTwo)
+		}
+	}
+
+	if len(firstTwo) != 2 {
+		t.Fatalf("expected two processed entries, got %v", firstTwo)
+	}
+	if firstTwo[0] != "fail-1" || firstTwo[1] != "ok-1" {
+		t.Fatalf("unexpected processing order: %v", firstTwo)
+	}
+}
+
 func TestQueueRetryAllowsSubsequentPayloads(t *testing.T) {
 	dir := t.TempDir()
 	queue, err := New(dir)
@@ -193,37 +227,13 @@ func TestQueueRetryAllowsSubsequentPayloads(t *testing.T) {
 		t.Fatal("timed out waiting for successful payload")
 	}
 
-	deadline := time.After(time.Second)
-	for {
+	waitForFailAttempts(t, func() int {
 		mu.Lock()
-		count := attempts["fail"]
-		mu.Unlock()
-		if count >= 3 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("expected failing payload to retry, saw %d attempts", count)
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
+		defer mu.Unlock()
+		return attempts["fail"]
+	})
 
-	firstTwo := make([]string, 0, 2)
-	for len(firstTwo) < 2 {
-		select {
-		case entry := <-processed:
-			firstTwo = append(firstTwo, entry)
-		case <-time.After(200 * time.Millisecond):
-			t.Fatalf("timed out collecting processed entries: %v", firstTwo)
-		}
-	}
-
-	if len(firstTwo) != 2 {
-		t.Fatalf("expected two processed entries, got %v", firstTwo)
-	}
-	if firstTwo[0] != "fail-1" || firstTwo[1] != "ok-1" {
-		t.Fatalf("unexpected processing order: %v", firstTwo)
-	}
+	waitAndAssertProcessedEvents(t, processed)
 
 	time.Sleep(50 * time.Millisecond)
 	files, err := os.ReadDir(dir)
