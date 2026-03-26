@@ -15,8 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  actions: read
-  contents: write
+  contents: read
 
 env:
   GOFLAGS: -buildvcs=false
@@ -25,6 +24,9 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -95,6 +97,8 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' }}
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     environment:
       name: production
     steps:
