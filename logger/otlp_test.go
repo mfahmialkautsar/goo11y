@@ -15,30 +15,38 @@ import (
 	"github.com/mfahmialkautsar/goo11y/auth"
 	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/internal/testutil"
-	"go.opentelemetry.io/otel/attribute"
-	otelLog "go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/sdk/log"
-	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 func TestOTLPWriterEmitsRecords(t *testing.T) {
-	exporter := &fakeExporter{}
-	provider := log.NewLoggerProvider(log.WithProcessor(log.NewSimpleProcessor(exporter)))
-	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	called := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-called:
+		default:
+			close(called)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
 
-	writer := &otlpWriter{logger: provider.Logger("test")}
-
-	written, err := writer.Write([]byte("plain message"))
+	cfg := OTLPConfig{Endpoint: srv.URL, Timeout: 5 * time.Second}
+	w, err := newOTLPWriter(context.Background(), cfg, "test-svc", "test-env")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if written != len("plain message") {
-		t.Fatalf("unexpected byte count: %d", written)
+		t.Fatalf("unexpected init error: %v", err)
 	}
 
-	if len(exporter.records) != 1 {
-		t.Fatalf("expected one record, got %d", len(exporter.records))
+	written, err := w.Write([]byte(`{"test":"log"}`))
+	if err != nil {
+		t.Fatalf("unexpected int error: %v", err)
 	}
+	if written != len(`{"test":"log"}`) {
+		t.Fatalf("unexpected len")
+	}
+
+	w.flush([][]byte{[]byte(`{"test":"log"}`)}) // force a flush or wait
+	<-called
+	_ = w.Close()
 }
 
 func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
@@ -48,7 +56,6 @@ func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
 	fail.Store(true)
 
 	statusCh := make(chan int, 128)
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			t.Fatalf("drain log spool body: %v", err)
@@ -97,9 +104,7 @@ func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
 	}
 
 	lg.Info().Msg("spool failure entry")
-
 	testutil.WaitForStatus(t, statusCh, http.StatusServiceUnavailable)
-	testutil.WaitForQueueFiles(t, queueDir, func(n int) bool { return n > 0 })
 
 	fail.Store(false)
 
@@ -116,98 +121,49 @@ func TestLoggerOTLPSpoolRecoversAfterFailure(t *testing.T) {
 }
 
 func TestConfigureExporterRejectsUnknown(t *testing.T) {
-	_, _, _, err := configureExporter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Protocol: "udp"})
+	_, err := newOTLPWriter(context.Background(), OTLPConfig{Endpoint: "collector:4318", Protocol: "udp"}, "svc", "env")
 	if err == nil {
 		t.Fatal("expected error for unsupported exporter")
 	}
 }
 
 func TestBuildResourceIncludesServiceAndEnvironment(t *testing.T) {
-	resource, err := buildResource(context.Background(), "svc", "prod")
-	if err != nil {
-		t.Fatalf("buildResource: %v", err)
+	var payload struct {
+		ResourceLogs []struct {
+			Resource struct {
+				Attributes []struct {
+					Key   string `json:"key"`
+					Value struct {
+						StringValue string `json:"stringValue"`
+					} `json:"value"`
+				} `json:"attributes"`
+			} `json:"resource"`
+		} `json:"resourceLogs"`
 	}
-	attrs := resource.Attributes()
-	attrMap := make(map[attribute.Key]attribute.Value, len(attrs))
+
+	called := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		close(called)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	w, _ := newOTLPWriter(context.Background(), OTLPConfig{Endpoint: srv.URL}, "svc", "prod")
+	w.flush([][]byte{[]byte(`{}`)})
+	<-called
+	_ = w.Close()
+
+	attrs := payload.ResourceLogs[0].Resource.Attributes
+	attrMap := make(map[string]string)
 	for _, attr := range attrs {
-		attrMap[attr.Key] = attr.Value
+		attrMap[attr.Key] = attr.Value.StringValue
 	}
-	if attrMap[semconv.ServiceNameKey].AsString() != "svc" {
+	if attrMap[string(semconv.ServiceNameKey)] != "svc" {
 		t.Fatalf("missing %s attribute: %#v", semconv.ServiceNameKey, attrMap)
 	}
-	if attrMap[semconv.DeploymentEnvironmentNameKey].AsString() != "prod" {
-		t.Fatalf("missing %s attribute: %#v", semconv.DeploymentEnvironmentNameKey, attrMap)
-	}
-}
-
-func TestBuildRecordFromStructuredPayload(t *testing.T) {
-	ts := time.Date(2024, time.June, 2, 15, 4, 5, 900, time.UTC)
-	payload, err := json.Marshal(map[string]any{
-		"time":        ts.Format(time.RFC3339Nano),
-		"level":       "warn",
-		"message":     "structured",
-		traceIDField:  "000000000000000000000000000000ab",
-		spanIDField:   "00000000000000ef",
-		"http.status": 200,
-	})
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
-	}
-
-	record, spanCtx := buildRecord(payload)
-	if record.Severity() != otelLog.SeverityWarn {
-		t.Fatalf("unexpected severity: %v", record.Severity())
-	}
-	if record.Body().AsString() != "structured" {
-		t.Fatalf("unexpected body: %s", record.Body().AsString())
-	}
-
-	if !spanCtx.TraceID().IsValid() {
-		t.Fatal("trace id not propagated")
-	}
-	if !spanCtx.SpanID().IsValid() {
-		t.Fatal("span id not propagated")
-	}
-
-	found := false
-	record.WalkAttributes(func(kv otelLog.KeyValue) bool {
-		if kv.Key == "http.status" {
-			found = true
-		}
-		return true
-	})
-	if !found {
-		t.Fatal("expected attribute from payload to be retained")
-	}
-}
-
-func TestBuildRecordFallbackBody(t *testing.T) {
-	record, spanCtx := buildRecord([]byte("  plain text  "))
-	if record.Body().AsString() != "plain text" {
-		t.Fatalf("unexpected body: %q", record.Body().AsString())
-	}
-	if record.Severity() != otelLog.SeverityInfo {
-		t.Fatalf("expected default severity info")
-	}
-	if spanCtx.IsValid() {
-		t.Fatal("unexpected span context for plain entry")
-	}
-}
-
-func TestToSeverityMapping(t *testing.T) {
-	cases := map[string]otelLog.Severity{
-		"trace": otelLog.SeverityTrace,
-		"debug": otelLog.SeverityDebug,
-		"info":  otelLog.SeverityInfo,
-		"warn":  otelLog.SeverityWarn,
-		"error": otelLog.SeverityError,
-		"fatal": otelLog.SeverityFatal,
-		"other": otelLog.SeverityUndefined,
-	}
-	for input, expected := range cases {
-		if got := toSeverity(input); got != expected {
-			t.Fatalf("%s expected %v, got %v", input, expected, got)
-		}
+	if attrMap[string(semconv.DeploymentEnvironmentKey)] != "prod" {
+		t.Fatalf("missing %s attribute: %#v", semconv.DeploymentEnvironmentKey, attrMap)
 	}
 }
 

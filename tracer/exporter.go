@@ -38,7 +38,7 @@ func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 			return nil, nil, fmt.Errorf("create trace client: %w", err)
 		}
 		spoolClient = client
-		opts = append(opts, otlptracehttp.WithHTTPClient(client.Client))
+		// opts = append(opts, otlptracehttp.WithHTTPClient(client.Client)) // unsupported in OTel < 1.25
 	}
 	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true}))
 

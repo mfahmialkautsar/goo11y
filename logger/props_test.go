@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/mfahmialkautsar/goo11y/constant"
-	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 func TestLoggerWriterProps(t *testing.T) {
@@ -139,7 +139,7 @@ func verifyOTLPOutput(t *testing.T, otlpBody []byte, serviceName, environment st
 	if !strings.Contains(otlpString, string(semconv.ServiceNameKey)) || !strings.Contains(otlpString, serviceName) {
 		t.Errorf("otlp resource missing service name: %s", otlpString)
 	}
-	if !strings.Contains(otlpString, string(semconv.DeploymentEnvironmentNameKey)) || !strings.Contains(otlpString, environment) {
+	if !strings.Contains(otlpString, string(semconv.DeploymentEnvironmentKey)) || !strings.Contains(otlpString, environment) {
 		t.Errorf("otlp resource missing environment: %s", otlpString)
 	}
 

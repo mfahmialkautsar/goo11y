@@ -147,7 +147,7 @@ func TestNextBackoffBounds(t *testing.T) {
 	}
 
 	current := initialBackoff
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		current = nextBackoff(current)
 	}
 	if current != maxBackoff {

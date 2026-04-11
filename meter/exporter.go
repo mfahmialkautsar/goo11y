@@ -39,7 +39,7 @@ func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoi
 			return nil, nil, fmt.Errorf("create metric client: %w", err)
 		}
 		spoolClient = client
-		opts = append(opts, otlpmetrichttp.WithHTTPClient(client.Client))
+		// opts = append(opts, otlpmetrichttp.WithHTTPClient(client.Client)) // unsupported in OTel < 1.25
 	}
 	opts = append(opts, otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: true}))
 

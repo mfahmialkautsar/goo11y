@@ -24,7 +24,7 @@ import (
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 func TestTelemetryEmitWarnAddsSpanEvents(t *testing.T) {
@@ -142,14 +142,14 @@ func TestBuildResourceComposes(t *testing.T) {
 
 	attrs := testutil.AttrsToMap(res.Attributes())
 	checks := map[string]string{
-		string(semconv.ServiceNameKey):               "svc",
-		string(semconv.ServiceVersionKey):            "1.2.3",
-		string(semconv.DeploymentEnvironmentNameKey): "prod",
-		"region":   "eu",
-		"detector": "yes",
-		"option":   "true",
-		"override": "ok",
-		"custom":   "yes",
+		string(semconv.ServiceNameKey):           "svc",
+		string(semconv.ServiceVersionKey):        "1.2.3",
+		string(semconv.DeploymentEnvironmentKey): "prod",
+		"region":                                 "eu",
+		"detector":                               "yes",
+		"option":                                 "true",
+		"override":                               "ok",
+		"custom":                                 "yes",
 	}
 	for key, want := range checks {
 		got, ok := attrs[key]

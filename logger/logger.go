@@ -15,7 +15,7 @@ import (
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
 	pkgerrors "github.com/pkg/errors"
 	"github.com/rs/zerolog"
-	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 )
 
 var (
@@ -31,7 +31,7 @@ var (
 	// ServiceNameKey is the standardized service name key.
 	ServiceNameKey = StandardizeKey(string(semconv.ServiceNameKey))
 	// DeploymentEnvironmentNameKey is the standardized environment name key.
-	DeploymentEnvironmentNameKey = StandardizeKey(string(semconv.DeploymentEnvironmentNameKey))
+	DeploymentEnvironmentNameKey = StandardizeKey(string(semconv.DeploymentEnvironmentKey))
 )
 
 const callerSkipFrameCount = 2
@@ -354,7 +354,7 @@ func handleTracer(current error, collected *[]runtime.Frame, frameSeen map[strin
 	if tracer, ok := current.(stackTracer); ok {
 		pcs := make([]uintptr, 0, len(tracer.StackTrace()))
 		for _, frame := range tracer.StackTrace() {
-			pcs = append(pcs, uintptr(frame)-1)
+			pcs = append(pcs, uintptr(frame))
 		}
 		if len(pcs) > 0 {
 			processPCS(pcs, collected, frameSeen)

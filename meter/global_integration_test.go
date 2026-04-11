@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 func TestGlobalMeterIntegration(t *testing.T) {
@@ -76,7 +76,7 @@ func TestGlobalMeterIntegration(t *testing.T) {
 	}
 
 	attr := attribute.String("test_case", labelValue)
-	for range 5 {
+	for i := 0; i < 5; i++ {
 		counter.Add(ctx, 1, metric.WithAttributes(attr))
 		time.Sleep(10 * time.Millisecond)
 	}

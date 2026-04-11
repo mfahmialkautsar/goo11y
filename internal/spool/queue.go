@@ -105,7 +105,7 @@ func NewWithErrorLogger(dir string, logger ErrorLogger) (*Queue, error) {
 		return nil, fmt.Errorf("spool: probe write: %w", err)
 	}
 	probeName := filepath.Base(probe.Name())
-	root, err := os.OpenRoot(cleaned)
+	root, err := spoofOpenRoot(cleaned)
 	if err != nil {
 		return nil, fmt.Errorf("spool: open root: %w", err)
 	}
@@ -375,7 +375,7 @@ func sortTokens(tokens []fileToken) {
 }
 
 func (q *Queue) readPayload(name string) ([]byte, error) {
-	root, err := os.OpenRoot(q.dir)
+	root, err := spoofOpenRoot(q.dir)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +560,7 @@ func (q *Queue) removeOverflowFiles(tokens []fileToken) int {
 	sortTokens(tokens)
 	removed := 0
 	excess := len(tokens) - q.maxFiles
-	for i := range excess {
+	for i := 0; i < excess; i++ {
 		name := tokens[i].name
 		if err := q.Complete(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			q.logError(fmt.Errorf("spool: remove overflow file %s: %w", name, err))

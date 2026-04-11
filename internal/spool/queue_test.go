@@ -18,7 +18,7 @@ func TestQueueRetriesUntilSuccess(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx := t.Context()
+	ctx := context.Background()
 
 	var attempts int32
 	done := make(chan struct{})
@@ -73,7 +73,7 @@ func TestQueueDropsCorruptPayload(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx := t.Context()
+	ctx := context.Background()
 
 	done := make(chan struct{})
 
@@ -187,7 +187,7 @@ func TestQueueRetryAllowsSubsequentPayloads(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx := t.Context()
+	ctx := context.Background()
 
 	var mu sync.Mutex
 	attempts := make(map[string]int)
@@ -262,7 +262,7 @@ func TestQueueDropsAfterMaxAttemptsAndAge(t *testing.T) {
 	queue.retryBase = 5 * time.Millisecond
 	queue.retryMax = 20 * time.Millisecond
 
-	ctx := t.Context()
+	ctx := context.Background()
 
 	var attempts int32
 	queue.Start(ctx, func(context.Context, []byte) error {
@@ -302,7 +302,7 @@ func TestQueueDropsWhenFull(t *testing.T) {
 	}
 	queue.maxFiles = 1
 
-	ctx := t.Context()
+	ctx := context.Background()
 
 	processed := make(chan struct{}, 1)
 	var failAttempts int32

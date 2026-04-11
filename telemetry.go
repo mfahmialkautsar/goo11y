@@ -13,7 +13,7 @@ import (
 	"github.com/mfahmialkautsar/goo11y/tracer"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 )
 
 const shutdownGracePeriod = 5 * time.Second
@@ -274,7 +274,7 @@ func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) 
 		attrs = append(attrs, semconv.ServiceVersionKey.String(cfg.Resource.ServiceVersion))
 	}
 	if cfg.Resource.Environment != "" {
-		attrs = append(attrs, semconv.DeploymentEnvironmentNameKey.String(cfg.Resource.Environment))
+		attrs = append(attrs, semconv.DeploymentEnvironmentKey.String(cfg.Resource.Environment))
 	}
 	for key, value := range cfg.Resource.Attributes {
 		attrs = append(attrs, attribute.String(key, value))

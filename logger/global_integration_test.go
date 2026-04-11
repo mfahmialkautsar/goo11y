@@ -51,7 +51,7 @@ func TestGlobalFileLoggingIntegration(t *testing.T) {
 	path := filepath.Join(dir, time.Now().Format("2006-01-02")+".log")
 
 	var content string
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		b, err := os.ReadFile(path)
 		if err == nil && len(b) > 0 {
 			content = string(b)

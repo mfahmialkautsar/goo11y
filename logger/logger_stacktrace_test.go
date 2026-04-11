@@ -329,7 +329,7 @@ func TestStackTraceDeepNesting(t *testing.T) {
 	}
 
 	var deepErr = pkgerrors.New("base")
-	for i := range 50 {
+	for i := 0; i < 50; i++ {
 		deepErr = pkgerrors.WithMessage(deepErr, fmt.Sprintf("wrap%d", i))
 	}
 

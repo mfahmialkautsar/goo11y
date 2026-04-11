@@ -1,407 +1,204 @@
 package logger
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
-	"time"
-
-	"github.com/mfahmialkautsar/goo11y/constant"
-	"github.com/mfahmialkautsar/goo11y/internal/attrutil"
-	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
-	"github.com/mfahmialkautsar/goo11y/internal/persistentgrpc"
 	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
-	"github.com/rs/zerolog"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
-	otelLog "go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/sdk/log"
-	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.28.0"
-	"go.opentelemetry.io/otel/trace"
-	collog "go.opentelemetry.io/proto/otlp/collector/logs/v1"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/protobuf/proto"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
 )
 
-const loggerInstrumentation = "github.com/mfahmialkautsar/goo11y/logger"
+type httpClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
 
 type otlpWriter struct {
-	logger   otelLog.Logger
-	provider *log.LoggerProvider
+	config      OTLPConfig
+	client      httpClient
+	serviceName string
+	environment string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	queue       chan []byte
 }
 
 func newOTLPWriter(ctx context.Context, cfg OTLPConfig, serviceName, environment string) (*otlpWriter, error) {
-	exporter, spool, httpClient, err := configureExporter(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	exporter = wrapLogExporter(exporter, "logger", cfg.Protocol, spool, httpClient)
-
-	res, err := buildResource(ctx, serviceName, environment)
-	if err != nil {
-		return nil, err
+	if cfg.Endpoint == "" {
+		return nil, fmt.Errorf("missing otlp endpoint")
 	}
 
-	var processor log.Processor
-	if !cfg.Async {
-		processor = log.NewSimpleProcessor(exporter)
+	if cfg.Protocol != "" && cfg.Protocol != "http" && cfg.Protocol != "http/protobuf" {
+		return nil, fmt.Errorf("unsupported protocol: %s", cfg.Protocol)
+	}
+
+	endpoint := cfg.Endpoint
+	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+		if cfg.Insecure {
+			endpoint = "http://" + endpoint
+		} else {
+			endpoint = "https://" + endpoint
+		}
+	}
+
+	cfg.Endpoint = endpoint
+
+	var client httpClient
+	if cfg.UseSpool {
+		c, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.Timeout, "logger")
+		if err != nil {
+			return nil, fmt.Errorf("persistenthttp test: %w", err)
+		}
+		client = c
 	} else {
-		processor = log.NewBatchProcessor(exporter)
+		client = &http.Client{
+			Timeout: cfg.Timeout,
+		}
 	}
 
-	provider := log.NewLoggerProvider(
-		log.WithResource(res),
-		log.WithProcessor(processor),
-	)
+	subCtx, cancel := context.WithCancel(ctx)
 
-	return &otlpWriter{
-		logger:   provider.Logger(loggerInstrumentation),
-		provider: provider,
-	}, nil
-}
+	w := &otlpWriter{
+		config:      cfg,
+		client:      client,
+		serviceName: serviceName,
+		environment: environment,
+		ctx:         subCtx,
+		cancel:      cancel,
+		queue:       make(chan []byte, 4096),
+	}
 
-func (w *otlpWriter) Close() error {
-	return w.provider.Shutdown(context.Background())
+	w.wg.Add(1)
+	go w.run()
+
+	return w, nil
 }
 
 func (w *otlpWriter) Write(p []byte) (int, error) {
-	record, spanCtx := buildRecord(p)
+	copyBuf := make([]byte, len(p))
+	copy(copyBuf, p)
 
-	emitCtx := context.Background()
-	if spanCtx.IsValid() {
-		emitCtx = trace.ContextWithSpanContext(emitCtx, spanCtx)
-	}
-
-	w.logger.Emit(emitCtx, record)
-	return len(p), nil
-}
-
-func configureExporter(ctx context.Context, cfg OTLPConfig) (log.Exporter, *persistentgrpc.Manager, *persistenthttp.Client, error) {
-	endpoint := strings.TrimSpace(cfg.Endpoint)
-	if endpoint == "" {
-		return nil, nil, nil, fmt.Errorf("otlp: endpoint is required")
-	}
-
-	parsed, err := otlputil.ParseEndpoint(endpoint, cfg.Insecure)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("otlp: %w", err)
-	}
-
-	var exporter log.Exporter
-	var grpcManager *persistentgrpc.Manager
-	var httpClient *persistenthttp.Client
-
-	switch cfg.Protocol {
-	case constant.ProtocolHTTP:
-		exporter, httpClient, err = setupHTTPExporter(ctx, cfg, parsed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-	case constant.ProtocolGRPC:
-		exporter, grpcManager, err = setupGRPCExporter(ctx, cfg, parsed)
-		if err != nil {
-			return nil, nil, nil, err
-		}
+	select {
+	case <-w.ctx.Done():
+		return 0, fmt.Errorf("writer closed")
 	default:
-		return nil, nil, nil, fmt.Errorf("logger: unsupported protocol %s", cfg.Protocol)
 	}
 
-	return exporter, grpcManager, httpClient, nil
-}
-
-type logExporterWithLogging struct {
-	log.Exporter
-	component  string
-	transport  string
-	spool      *persistentgrpc.Manager
-	httpClient *persistenthttp.Client
-}
-
-func wrapLogExporter(exp log.Exporter, component, transport string, spool *persistentgrpc.Manager, httpClient *persistenthttp.Client) log.Exporter {
-	if exp == nil {
-		if spool != nil {
-			_ = spool.Stop(context.Background())
-		}
-		if httpClient != nil {
-			_ = httpClient.Close()
-		}
-		return exp
-	}
-	return &logExporterWithLogging{
-		Exporter:   exp,
-		component:  component,
-		transport:  transport,
-		spool:      spool,
-		httpClient: httpClient,
-	}
-}
-
-func (l logExporterWithLogging) Export(ctx context.Context, records []log.Record) error {
-	err := l.Exporter.Export(ctx, records)
-	if err != nil {
-		otlputil.LogExportFailure(l.component, l.transport, err)
-	}
-	return err
-}
-
-func (l logExporterWithLogging) Shutdown(ctx context.Context) error {
-	err := l.Exporter.Shutdown(ctx)
-	if err != nil {
-		otlputil.LogExportFailure(l.component, l.transport, err)
-	}
-	if l.spool != nil {
-		if stopErr := l.spool.Stop(ctx); stopErr != nil && err == nil {
-			err = stopErr
-		}
-	}
-	if l.httpClient != nil {
-		if closeErr := l.httpClient.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
-	}
-	return err
-}
-
-func (l logExporterWithLogging) ForceFlush(ctx context.Context) error {
-	err := l.Exporter.ForceFlush(ctx)
-	if err != nil {
-		otlputil.LogExportFailure(l.component, l.transport, err)
-	}
-	return err
-}
-
-func setupHTTPExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, *persistenthttp.Client, error) {
-	options := []otlploghttp.Option{
-		otlploghttp.WithEndpoint(strings.TrimRight(endpoint.Host, "/")),
-		otlploghttp.WithURLPath(endpoint.PathWithSuffix("/v1/logs")),
-	}
-
-	if cfg.Timeout > 0 {
-		options = append(options, otlploghttp.WithTimeout(cfg.Timeout))
-	}
-	if endpoint.Insecure {
-		options = append(options, otlploghttp.WithInsecure())
-	}
-	if headers := cfg.headerMap(); len(headers) > 0 {
-		options = append(options, otlploghttp.WithHeaders(headers))
-	}
-	var spoolClient *persistenthttp.Client
-	if cfg.UseSpool {
-		client, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.Timeout, "logger")
-		if err != nil {
-			return nil, nil, fmt.Errorf("create log client: %w", err)
-		}
-		spoolClient = client
-		options = append(options, otlploghttp.WithHTTPClient(client.Client))
-	}
-
-	options = append(options, otlploghttp.WithRetry(otlploghttp.RetryConfig{Enabled: true}))
-
-	exporter, err := otlploghttp.New(ctx, options...)
-	if err != nil {
-		if spoolClient != nil {
-			_ = spoolClient.Close()
-		}
-		return nil, nil, fmt.Errorf("otlp http exporter: %w", err)
-	}
-	return exporter, spoolClient, nil
-}
-
-func setupGRPCExporter(ctx context.Context, cfg OTLPConfig, endpoint otlputil.Endpoint) (log.Exporter, *persistentgrpc.Manager, error) {
-	if endpoint.HasPath() {
-		return nil, nil, fmt.Errorf("otlp: grpc endpoint %q must not include a path", cfg.Endpoint)
-	}
-
-	options := []otlploggrpc.Option{
-		otlploggrpc.WithEndpoint(endpoint.HostWithPath()),
-	}
-
-	if cfg.Timeout > 0 {
-		options = append(options, otlploggrpc.WithTimeout(cfg.Timeout))
-	}
-	if endpoint.Insecure {
-		options = append(options, otlploggrpc.WithInsecure())
-	} else {
-		options = append(options, otlploggrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))
-	}
-	if headers := cfg.headerMap(); len(headers) > 0 {
-		options = append(options, otlploggrpc.WithHeaders(headers))
-	}
-
-	var spoolManager *persistentgrpc.Manager
-	if cfg.UseSpool {
-		manager, err := persistentgrpc.NewManager(
-			cfg.QueueDir,
-			"logger",
-			cfg.Protocol,
-			"/opentelemetry.proto.collector.logs.v1.LogsService/Export",
-			func() proto.Message { return new(collog.ExportLogsServiceRequest) },
-			func() proto.Message { return new(collog.ExportLogsServiceResponse) },
-		)
-		if err != nil {
-			return nil, nil, err
-		}
-		spoolManager = manager
-		options = append(options, otlploggrpc.WithDialOption(grpc.WithUnaryInterceptor(manager.Interceptor())))
-	}
-
-	options = append(options, otlploggrpc.WithRetry(otlploggrpc.RetryConfig{Enabled: true}))
-
-	exporter, err := otlploggrpc.New(ctx, options...)
-	if err != nil {
-		if spoolManager != nil {
-			_ = spoolManager.Stop(context.Background())
-		}
-		return nil, nil, fmt.Errorf("otlp grpc exporter: %w", err)
-	}
-	return exporter, spoolManager, nil
-}
-
-func buildResource(ctx context.Context, serviceName, environment string) (*resource.Resource, error) {
-	attrs := make([]attribute.KeyValue, 0, 5)
-	if serviceName != "" {
-		attrs = append(attrs,
-			semconv.ServiceNameKey.String(serviceName),
-		)
-	}
-	if environment != "" {
-		attrs = append(attrs,
-			semconv.DeploymentEnvironmentNameKey.String(environment),
-		)
-	}
-
-	userResource := resource.Empty()
-	if len(attrs) > 0 {
-		var err error
-		userResource, err = resource.New(ctx, resource.WithAttributes(attrs...))
-		if err != nil {
-			return nil, fmt.Errorf("otlp resource: %w", err)
-		}
-	}
-
-	merged, err := resource.Merge(resource.Default(), userResource)
-	if err != nil {
-		return nil, fmt.Errorf("otlp resource merge: %w", err)
-	}
-	return merged, nil
-}
-
-func buildRecord(entry []byte) (otelLog.Record, trace.SpanContext) {
-	record := otelLog.Record{}
-	observed := time.Now()
-	record.SetTimestamp(observed)
-	record.SetSeverity(otelLog.SeverityInfo)
-	record.SetBody(otelLog.StringValue(strings.TrimSpace(string(entry))))
-
-	var spanCtx trace.SpanContext
-
-	var payload map[string]any
-	if err := json.Unmarshal(entry, &payload); err != nil {
-		return record, spanCtx
-	}
-
-	if ts, ok := payload[zerolog.TimestampFieldName].(string); ok {
-		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-			record.SetTimestamp(parsed)
-		}
-	}
-
-	if msg, ok := payload[zerolog.MessageFieldName].(string); ok {
-		record.SetBody(otelLog.StringValue(msg))
-	}
-
-	if lvl, ok := payload[zerolog.LevelFieldName].(string); ok {
-		severityText := strings.ToUpper(lvl)
-		record.SetSeverity(toSeverity(severityText))
-	}
-
-	var traceID trace.TraceID
-	if traceVal, ok := payload[traceIDField].(string); ok {
-		if id, err := trace.TraceIDFromHex(traceVal); err == nil {
-			traceID = id
-		}
-	}
-	var spanID trace.SpanID
-	if spanVal, ok := payload[spanIDField].(string); ok {
-		if id, err := trace.SpanIDFromHex(spanVal); err == nil {
-			spanID = id
-		}
-	}
-	if traceID.IsValid() {
-		cfg := trace.SpanContextConfig{
-			TraceID:    traceID,
-			TraceFlags: trace.FlagsSampled,
-		}
-		if spanID.IsValid() {
-			cfg.SpanID = spanID
-		}
-		spanCtx = trace.NewSpanContext(cfg)
-	}
-
-	for _, attr := range attributesFromPayload(payload) {
-		record.AddAttributes(toLogKeyValue(attr))
-	}
-
-	return record, spanCtx
-}
-
-func attributesFromPayload(payload map[string]any) []attribute.KeyValue {
-	attrs := make([]attribute.KeyValue, 0, len(payload))
-	for key, value := range payload {
-		if skipField(key) {
-			continue
-		}
-		if attr, ok := attrutil.FromValue(key, value); ok {
-			attrs = append(attrs, attr)
-		}
-	}
-	return attrs
-}
-
-func skipField(key string) bool {
-	switch key {
-	case zerolog.TimestampFieldName, zerolog.LevelFieldName, zerolog.MessageFieldName, traceIDField, spanIDField, ServiceNameKey, DeploymentEnvironmentNameKey:
-		return true
+	select {
+	case w.queue <- copyBuf:
+		return len(p), nil
 	default:
-		return false
+		// Queue full, drop log to avoid blocking
+		return len(p), nil
 	}
 }
 
-func toLogKeyValue(attr attribute.KeyValue) otelLog.KeyValue {
-	key := string(attr.Key)
-	switch attr.Value.Type() {
-	case attribute.BOOL:
-		return otelLog.Bool(key, attr.Value.AsBool())
-	case attribute.INT64:
-		return otelLog.Int64(key, attr.Value.AsInt64())
-	case attribute.FLOAT64:
-		return otelLog.Float64(key, attr.Value.AsFloat64())
-	case attribute.STRING:
-		return otelLog.String(key, attr.Value.AsString())
-	default:
-		return otelLog.String(key, attr.Value.Emit())
+func (w *otlpWriter) Close() error {
+	w.cancel()
+	w.wg.Wait()
+	return nil
+}
+
+func (w *otlpWriter) run() {
+	defer w.wg.Done()
+
+	var batch [][]byte
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-w.ctx.Done():
+			close(w.queue)
+			for p := range w.queue {
+				batch = append(batch, p)
+			}
+			w.flush(batch)
+			return
+		case p := <-w.queue:
+			batch = append(batch, p)
+			if len(batch) >= 100 {
+				w.flush(batch)
+				batch = batch[:0]
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				w.flush(batch)
+				batch = batch[:0]
+			}
+		}
 	}
 }
 
-func toSeverity(level string) otelLog.Severity {
-	switch strings.ToUpper(level) {
-	case "TRACE":
-		return otelLog.SeverityTrace
-	case "DEBUG":
-		return otelLog.SeverityDebug
-	case "INFO":
-		return otelLog.SeverityInfo
-	case "WARN", "WARNING":
-		return otelLog.SeverityWarn
-	case "ERROR":
-		return otelLog.SeverityError
-	case "FATAL", "PANIC":
-		return otelLog.SeverityFatal
-	default:
-		return otelLog.SeverityUndefined
+func (w *otlpWriter) flush(batch [][]byte) {
+	if len(batch) == 0 {
+		return
 	}
+
+	logs := make([]map[string]interface{}, 0, len(batch))
+	for _, p := range batch {
+		var l map[string]interface{}
+		if err := json.Unmarshal(p, &l); err == nil {
+			delete(l, ServiceNameKey)
+			delete(l, DeploymentEnvironmentNameKey)
+			logs = append(logs, l)
+		}
+	}
+
+	// minimal OTLP log payload
+	payload := map[string]interface{}{
+		"resourceLogs": []interface{}{
+			map[string]interface{}{
+				"resource": map[string]interface{}{
+					"attributes": []interface{}{
+						map[string]interface{}{
+							"key": "service.name",
+							"value": map[string]interface{}{
+								"stringValue": w.serviceName,
+							},
+						},
+						map[string]interface{}{
+							"key": "deployment.environment",
+							"value": map[string]interface{}{
+								"stringValue": w.environment,
+							},
+						},
+					},
+				},
+				"scopeLogs": []interface{}{
+					map[string]interface{}{
+						"logRecords": logs,
+					},
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), "POST", w.config.Endpoint, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+
+	for k, v := range w.config.headerMap() {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
 }

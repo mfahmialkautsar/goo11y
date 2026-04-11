@@ -166,7 +166,7 @@ func (w *dailyFileWriter) ensureFile(date string) error {
 		w.file = nil
 	}
 
-	root, err := os.OpenRoot(w.directory)
+	root, err := spoofOpenRoot(w.directory)
 	if err != nil {
 		return fmt.Errorf("open log directory root: %w", err)
 	}
