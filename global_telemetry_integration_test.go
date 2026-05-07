@@ -42,9 +42,10 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer profileSrv.Close()
+	t.Cleanup(profileSrv.Close)
 
 	serviceName := "test-service-global"
+	traceFileDir := t.TempDir()
 	metricName := "global_metric_total"
 	testCase := "global-telemetry-integration"
 	logMessage := "global-telemetry-log-message"
@@ -71,10 +72,15 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 		},
 		Tracer: tracer.Config{
 			Enabled:     true,
-			Endpoint:    "http://localhost:4318",
 			ServiceName: serviceName,
 			SampleRatio: 1.0,
 			UseGlobal:   true,
+			Export: tracer.ExportConfig{
+				File: tracer.FileConfig{
+					Enabled:   true,
+					Directory: traceFileDir,
+				},
+			},
 		},
 		Meter: meter.Config{
 			Enabled:        true,
@@ -140,24 +146,46 @@ func TestGlobalTelemetryIntegration(t *testing.T) {
 		t.Fatalf("force flush: %v", err)
 	}
 
-	verifyGlobalLog(t, logBuf.String(), logMessage, traceID, spanID)
-	verifyGlobalTraces(t, traceExporter, traceID)
-	verifyGlobalMetrics(t, ctx, meterReader, metricName)
+	verifyGlobalLog(t, logBuf.String(), logMessage, serviceName, testCase, traceID, spanID)
+	verifyGlobalTraces(t, traceExporter, traceFileDir, traceID, spanID, serviceName, testCase)
+	verifyGlobalMetrics(t, ctx, meterReader, metricName, testCase, traceID, spanID)
 }
 
-func verifyGlobalLog(t *testing.T, logStr, logMessage, traceID, spanID string) {
+func verifyGlobalLog(t *testing.T, logStr, logMessage, serviceName, testCase, traceID, spanID string) {
 	if !strings.Contains(logStr, logMessage) {
 		t.Fatalf("log message not found in buffer: %s", logStr)
 	}
-	if !strings.Contains(logStr, traceID) {
-		t.Fatalf("traceID not found in log: %s", logStr)
+
+	lines := strings.Split(strings.TrimSpace(logStr), "\n")
+	var entry map[string]any
+	for _, line := range lines {
+		candidate := decodeJSONLogLine(t, line)
+		if candidate["message"] == logMessage {
+			entry = candidate
+			break
+		}
 	}
-	if !strings.Contains(logStr, spanID) {
-		t.Fatalf("spanID not found in log: %s", logStr)
+	if entry == nil {
+		t.Fatalf("global log message %q not found in %d log lines: %s", logMessage, len(lines), logStr)
+	}
+	if got := entry["message"]; got != logMessage {
+		t.Fatalf("unexpected global log message: got %v want %s", got, logMessage)
+	}
+	if got := entry[logger.ServiceNameKey]; got != serviceName {
+		t.Fatalf("unexpected global log service name: got %v want %s", got, serviceName)
+	}
+	if got := entry["test_case"]; got != testCase {
+		t.Fatalf("unexpected global log test_case: got %v want %s", got, testCase)
+	}
+	if got := entry["trace_id"]; got != traceID {
+		t.Fatalf("unexpected global log trace_id: got %v want %s", got, traceID)
+	}
+	if got := entry["span_id"]; got != spanID {
+		t.Fatalf("unexpected global log span_id: got %v want %s", got, spanID)
 	}
 }
 
-func verifyGlobalTraces(t *testing.T, traceExporter *tracetest.InMemoryExporter, traceID string) {
+func verifyGlobalTraces(t *testing.T, traceExporter *tracetest.InMemoryExporter, traceFileDir, traceID, spanID, serviceName, testCase string) {
 	spans := inmemory.GetSpans(traceExporter)
 	foundSpan, ok := inmemory.FindSpanByName(spans, "global-telemetry-span")
 	if !ok {
@@ -166,9 +194,35 @@ func verifyGlobalTraces(t *testing.T, traceExporter *tracetest.InMemoryExporter,
 	if foundSpan.SpanContext.TraceID().String() != traceID {
 		t.Errorf("expected traceID %s, got %s", traceID, foundSpan.SpanContext.TraceID().String())
 	}
+	if foundSpan.SpanContext.SpanID().String() != spanID {
+		t.Errorf("expected spanID %s, got %s", spanID, foundSpan.SpanContext.SpanID().String())
+	}
+	attrs := make(map[string]string)
+	for _, kv := range foundSpan.Attributes {
+		attrs[string(kv.Key)] = kv.Value.AsString()
+	}
+	if got := attrs["test_case"]; got != testCase {
+		t.Fatalf("unexpected in-memory trace test_case: got %s want %s", got, testCase)
+	}
+
+	traceFileRequests := waitForTraceFileRequests(t, traceFileDir)
+	fileSpan, resourceAttrs := findTraceFileSpan(t, traceFileRequests, "global-telemetry-span")
+	if got := traceIDHex(fileSpan); got != traceID {
+		t.Fatalf("global trace file trace_id mismatch: got %s want %s", got, traceID)
+	}
+	if got := spanIDHex(fileSpan); got != spanID {
+		t.Fatalf("global trace file span_id mismatch: got %s want %s", got, spanID)
+	}
+	if got := resourceAttrs["service.name"]; got != serviceName {
+		t.Fatalf("global trace file service.name mismatch: got %v want %s", got, serviceName)
+	}
+	spanAttrs := otlpAttributesToMap(fileSpan.GetAttributes())
+	if got := spanAttrs["test_case"]; got != testCase {
+		t.Fatalf("global trace file test_case mismatch: got %v want %s", got, testCase)
+	}
 }
 
-func verifyGlobalMetrics(t *testing.T, ctx context.Context, meterReader *sdkmetric.ManualReader, metricName string) {
+func verifyGlobalMetrics(t *testing.T, ctx context.Context, meterReader *sdkmetric.ManualReader, metricName, testCase, traceID, spanID string) {
 	rm, err := inmemory.GetMetrics(ctx, meterReader)
 	if err != nil {
 		t.Fatalf("get metrics: %v", err)
@@ -186,5 +240,18 @@ func verifyGlobalMetrics(t *testing.T, ctx context.Context, meterReader *sdkmetr
 	}
 	if sumData.DataPoints[0].Value != 1 {
 		t.Errorf("expected metric value 1, got %v", sumData.DataPoints[0].Value)
+	}
+	attrs := make(map[string]string)
+	for _, kv := range sumData.DataPoints[0].Attributes.ToSlice() {
+		attrs[string(kv.Key)] = kv.Value.AsString()
+	}
+	if got := attrs["test_case"]; got != testCase {
+		t.Fatalf("unexpected global metric test_case: got %s want %s", got, testCase)
+	}
+	if got := attrs["trace_id"]; got != traceID {
+		t.Fatalf("unexpected global metric trace_id: got %s want %s", got, traceID)
+	}
+	if got := attrs["span_id"]; got != spanID {
+		t.Fatalf("unexpected global metric span_id: got %s want %s", got, spanID)
 	}
 }
