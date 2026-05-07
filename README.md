@@ -62,8 +62,18 @@ func main() {
             },
         },
         Tracer: tracer.Config{
-            Enabled:  true,
-            Endpoint: "telemetry.example.com:4318",
+            Enabled: true,
+            Export: tracer.ExportConfig{
+                Backend: tracer.BackendConfig{
+                    Enabled:  true,
+                    Endpoint: "telemetry.example.com:4318",
+                    Protocol: "http",
+                },
+                File: tracer.FileConfig{
+                    Enabled:   true,
+                    Directory: "/var/log/goo11y/traces",
+                },
+            },
         },
         Meter: meter.Config{
             Enabled:  true,
@@ -100,15 +110,15 @@ func main() {
 
 Each component struct mirrors the upstream OpenTelemetry options but adds convenient defaults:
 - **Logger** (`logger.Config`): Zerolog core, optional console/file writers, OTLP exporters via HTTP or gRPC, persistent queues, and failure handling hooks.
-- **Tracer** (`tracer.Config`): HTTP or gRPC OTLP exporter, sample ratios, queueing support, and `UseGlobal` to install the provider into OpenTelemetry globals.
+- **Tracer** (`tracer.Config`): Nested backend/file exporters, write-ahead backend failover journals, OTLP JSON trace files, and `UseGlobal` to install the provider into OpenTelemetry globals.
 - **Meter** (`meter.Config`): Mirrors tracer defaults, controls export interval, runtime instrumentation, and queueing for HTTP exporters.
 - **Profiler** (`profiler.Config`): Pyroscope integration with tenant headers, credentials, mutex/block sampling knobs, and optional global registration.
 - **Credentials** (`auth.Credentials`): Basic auth, bearer tokens, API-keys, and arbitrary headers merged without losing caller provided values.
 
 ## Reliability and Delivery
 - Disk-backed queues live under `${XDG_CACHE_HOME}/goo11y/<signal>` or the system temp directory.
-- Queue playback uses exponential backoff (1s minimum, 1m maximum) and tolerates process crashes by persisting OTLP payloads.
-- Spooling is opt-in per signal (`UseSpool`); synchronous exporters bypass the queue but still inherit retry semantics from upstream OTLP clients.
+- Tracer backend failover uses a write-ahead journal under `${XDG_CACHE_HOME}/goo11y/trace-failover` by default and replays with exponential backoff (1s minimum, 1m maximum).
+- File trace export writes OTLP JSON lines under `${XDG_CACHE_HOME}/goo11y/file-traces` by default, which can be replayed by the app or handed off to Alloy/collector ingestion.
 
 ## Development
 - `golangci-lint run` — mirrors project linting.
