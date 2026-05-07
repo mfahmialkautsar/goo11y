@@ -11,9 +11,13 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    strategy:
+      fail-fast: true
+      matrix:
+        check: [verify, security, lint]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -25,6 +29,7 @@ jobs:
           cache: true
 
       - name: Verify formatting
+        if: matrix.check == 'verify'
         run: |
           if [ -n "$(gofmt -l .)" ]; then
             echo "Formatting issues found:"
@@ -33,6 +38,7 @@ jobs:
           fi
 
       - name: Verify modules
+        if: matrix.check == 'verify'
         run: |
           go mod tidy
           if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
@@ -42,50 +48,27 @@ jobs:
           fi
 
       - name: Verify dependencies
+        if: matrix.check == 'verify'
         run: go mod verify
 
-  security:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - name: Run gosec
+        if: matrix.check == 'security'
         uses: securego/gosec@master
         with:
           args: ./...
 
       - name: Run govulncheck
+        if: matrix.check == 'security'
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
-  lint:
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - name: Run golangci-lint
+        if: matrix.check == 'lint'
         uses: golangci/golangci-lint-action@v8
 
   test:
-    needs: lint
+    needs: [checks]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
