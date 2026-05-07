@@ -42,14 +42,19 @@ func TestGlobalTracerIntegration(t *testing.T) {
 	}
 
 	cfg := Config{
-		Enabled:       true,
-		Endpoint:      server.URL,
-		Insecure:      true,
-		UseSpool:      false,
-		ServiceName:   serviceName,
-		SampleRatio:   1.0,
-		ExportTimeout: 5 * time.Second,
-		QueueDir:      queueDir,
+		Enabled:     true,
+		ServiceName: serviceName,
+		SampleRatio: 1.0,
+		Export: ExportConfig{
+			Backend: BackendConfig{
+				Enabled:  true,
+				Endpoint: server.URL,
+				Timeout:  5 * time.Second,
+				Failover: FailoverConfig{
+					Directory: queueDir,
+				},
+			},
+		},
 	}
 
 	if err := Init(ctx, cfg, res); err != nil {
