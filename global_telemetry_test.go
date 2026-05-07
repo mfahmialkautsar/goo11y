@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -56,7 +55,7 @@ func TestTelemetryLinksTracesToProfilesWithGlobalProviders(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}))
-	defer traceSrv.Close()
+	t.Cleanup(traceSrv.Close)
 
 	profileSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
@@ -67,22 +66,22 @@ func TestTelemetryLinksTracesToProfilesWithGlobalProviders(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer profileSrv.Close()
-
-	endpoint := strings.TrimPrefix(traceSrv.URL, "http://")
-	endpoint = strings.TrimPrefix(endpoint, "https://")
+	t.Cleanup(profileSrv.Close)
 
 	cfg := Config{
 		Resource: ResourceConfig{
 			ServiceName: "telemetry-profiler-global",
 		},
 		Tracer: tracer.Config{
-			Enabled:       true,
-			Endpoint:      endpoint,
-			Insecure:      true,
-			UseSpool:      false,
-			UseGlobal:     true,
-			ExportTimeout: 50 * time.Millisecond,
+			Enabled:   true,
+			UseGlobal: true,
+			Export: tracer.ExportConfig{
+				Backend: tracer.BackendConfig{
+					Enabled:  true,
+					Endpoint: traceSrv.URL,
+					Timeout:  50 * time.Millisecond,
+				},
+			},
 		},
 		Profiler: profiler.Config{
 			Enabled:              true,

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,9 +42,10 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer profileSrv.Close()
+	t.Cleanup(profileSrv.Close)
 
 	loggerFileDir := t.TempDir()
+	traceFileDir := t.TempDir()
 	serviceName := "test-service"
 	metricName := "test_metric_total"
 	testCase := "telemetry-integration"
@@ -72,9 +72,14 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 		},
 		Tracer: tracer.Config{
 			Enabled:     true,
-			Endpoint:    "http://localhost:4318",
 			ServiceName: serviceName,
 			SampleRatio: 1.0,
+			Export: tracer.ExportConfig{
+				File: tracer.FileConfig{
+					Enabled:   true,
+					Directory: traceFileDir,
+				},
+			},
 		},
 		Meter: meter.Config{
 			Enabled:        true,
@@ -134,39 +139,48 @@ func TestTelemetryTracePropagationIntegration(t *testing.T) {
 
 	span.End()
 
-	// Verify File Log
-	filePath := filepath.Join(loggerFileDir, time.Now().Format("2006-01-02")+".log")
-	if filePath == "" {
-		t.Fatal("filePath is empty")
-	}
-	// Close logger to ensure flush
-	if err := tele.Logger.Close(); err != nil {
-		t.Fatalf("close logger: %v", err)
-	}
-
-	verifyFileLog(t, filePath)
-
 	// Verify Traces
 	if err := tele.ForceFlush(ctx); err != nil {
 		t.Fatalf("force flush: %v", err)
 	}
-	verifyTelemetryTraces(t, traceExporter, traceID, spanID, testCase)
+
+	filePath := filepath.Join(loggerFileDir, time.Now().Format("2006-01-02")+".log")
+	verifyFileLog(t, filePath, logMessage, serviceName, "test", testCase, traceID, spanID)
+	verifyTelemetryTraces(t, traceExporter, traceFileDir, traceID, spanID, serviceName, testCase)
 
 	// Verify Metrics
 	verifyTelemetryMetrics(t, ctx, meterReader, metricName, testCase, traceID, spanID)
 }
 
-func verifyFileLog(t *testing.T, filePath string) {
-	content, err := io.ReadAll(mustOpen(t, filePath))
-	if err != nil {
-		t.Fatalf("read log file: %v", err)
+func verifyFileLog(t *testing.T, filePath, message, serviceName, environment, testCase, traceID, spanID string) {
+	entry := waitForJSONLogEntry(t, filePath, message)
+	if got := entry["message"]; got != message {
+		t.Fatalf("unexpected log message: got %v want %s", got, message)
 	}
-	if len(content) == 0 {
-		t.Fatal("log file is empty")
+	if got := entry[logger.ServiceNameKey]; got != serviceName {
+		t.Fatalf("unexpected log service name: got %v want %s", got, serviceName)
+	}
+	if got := entry[logger.DeploymentEnvironmentNameKey]; got != environment {
+		t.Fatalf("unexpected log environment: got %v want %s", got, environment)
+	}
+	if got := entry["test_case"]; got != testCase {
+		t.Fatalf("unexpected log test_case: got %v want %s", got, testCase)
+	}
+	if got := entry["trace_id"]; got != traceID {
+		t.Fatalf("unexpected log trace_id: got %v want %s", got, traceID)
+	}
+	if got := entry["span_id"]; got != spanID {
+		t.Fatalf("unexpected log span_id: got %v want %s", got, spanID)
+	}
+	if got := entry["level"]; got != "info" {
+		t.Fatalf("unexpected log level: got %v want info", got)
+	}
+	if _, ok := entry["time"].(string); !ok {
+		t.Fatalf("missing log timestamp: %#v", entry)
 	}
 }
 
-func verifyTelemetryTraces(t *testing.T, traceExporter *tracetest.InMemoryExporter, traceID, spanID, testCase string) {
+func verifyTelemetryTraces(t *testing.T, traceExporter *tracetest.InMemoryExporter, traceFileDir, traceID, spanID, serviceName, testCase string) {
 	spans := inmemory.GetSpans(traceExporter)
 	foundSpan, ok := inmemory.FindSpanByName(spans, "telemetry-integration-span")
 	if !ok {
@@ -185,6 +199,28 @@ func verifyTelemetryTraces(t *testing.T, traceExporter *tracetest.InMemoryExport
 	}
 	if v, ok := attrs["test_case"]; !ok || v != testCase {
 		t.Errorf("expected attribute test_case=%s, got %s", testCase, v)
+	}
+
+	traceFileRequests := waitForTraceFileRequests(t, traceFileDir)
+	fileSpan, resourceAttrs := findTraceFileSpan(t, traceFileRequests, "telemetry-integration-span")
+	if got := traceIDHex(fileSpan); got != traceID {
+		t.Fatalf("trace file trace_id mismatch: got %s want %s", got, traceID)
+	}
+	if got := spanIDHex(fileSpan); got != spanID {
+		t.Fatalf("trace file span_id mismatch: got %s want %s", got, spanID)
+	}
+	if got := resourceAttrs["service.name"]; got != serviceName {
+		t.Fatalf("trace file service.name mismatch: got %v want %s", got, serviceName)
+	}
+	spanAttrs := otlpAttributesToMap(fileSpan.GetAttributes())
+	if got := spanAttrs["test_case"]; got != testCase {
+		t.Fatalf("trace file test_case mismatch: got %v want %s", got, testCase)
+	}
+	if fileSpan.GetKind().String() != "SPAN_KIND_INTERNAL" {
+		t.Fatalf("trace file span kind mismatch: %s", fileSpan.GetKind().String())
+	}
+	if fileSpan.GetStartTimeUnixNano() == 0 || fileSpan.GetEndTimeUnixNano() == 0 {
+		t.Fatalf("trace file missing span timestamps: start=%d end=%d", fileSpan.GetStartTimeUnixNano(), fileSpan.GetEndTimeUnixNano())
 	}
 }
 
@@ -223,13 +259,4 @@ func verifyTelemetryMetrics(t *testing.T, ctx context.Context, meterReader *sdkm
 	if v, ok := metricAttrs["span_id"]; !ok || v != spanID {
 		t.Errorf("expected metric attribute span_id=%s, got %s", spanID, v)
 	}
-}
-
-func mustOpen(t *testing.T, path string) *os.File {
-	t.Helper()
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open file %s: %v", path, err)
-	}
-	return f
 }
