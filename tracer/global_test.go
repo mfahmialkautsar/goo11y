@@ -12,7 +12,6 @@ import (
 )
 
 func TestInitSetsGlobalTracer(t *testing.T) {
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.WriteHeader(http.StatusOK)
@@ -23,12 +22,18 @@ func TestInitSetsGlobalTracer(t *testing.T) {
 	res := resource.Empty()
 
 	cfg := Config{
-		Enabled:       true,
-		Endpoint:      server.Listener.Addr().String(),
-		Insecure:      true,
-		ServiceName:   "global-tracer",
-		ExportTimeout: 100 * time.Millisecond,
-		QueueDir:      t.TempDir(),
+		Enabled:     true,
+		ServiceName: "global-tracer",
+		Export: ExportConfig{
+			Backend: BackendConfig{
+				Enabled:  true,
+				Endpoint: server.URL,
+				Timeout:  100 * time.Millisecond,
+				Failover: FailoverConfig{
+					Directory: t.TempDir(),
+				},
+			},
+		},
 	}
 
 	if err := Init(ctx, cfg, res); err != nil {
@@ -72,8 +77,13 @@ func TestGlobalForceFlush(t *testing.T) {
 
 	cfg := Config{
 		Enabled:     true,
-		Endpoint:    "http://localhost:9999",
 		ServiceName: "test-global-flush",
+		Export: ExportConfig{
+			File: FileConfig{
+				Enabled:   true,
+				Directory: t.TempDir(),
+			},
+		},
 	}
 
 	if err := Init(ctx, cfg, res); err != nil {

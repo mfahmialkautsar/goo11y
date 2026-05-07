@@ -43,14 +43,20 @@ func TestTracerIntegration(t *testing.T) {
 	}
 
 	cfg := Config{
-		Enabled:       true,
-		Endpoint:      server.URL,
-		Insecure:      true,
-		ServiceName:   serviceName,
-		SampleRatio:   1.0,
-		ExportTimeout: 5 * time.Second,
-		QueueDir:      queueDir,
-		Protocol:      "http", // Explicitly use HTTP
+		Enabled:     true,
+		ServiceName: serviceName,
+		SampleRatio: 1.0,
+		Export: ExportConfig{
+			Backend: BackendConfig{
+				Enabled:  true,
+				Endpoint: server.URL,
+				Timeout:  5 * time.Second,
+				Protocol: "http",
+				Failover: FailoverConfig{
+					Directory: queueDir,
+				},
+			},
+		},
 	}
 
 	provider, err := Setup(ctx, cfg, res)
