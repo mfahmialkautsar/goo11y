@@ -1,6 +1,6 @@
 module github.com/mfahmialkautsar/goo11y
 
-go 1.25.8
+go 1.25.9
 
 require (
 	github.com/creasty/defaults v1.8.0
