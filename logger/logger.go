@@ -426,7 +426,7 @@ func isSkippedFrame(frame runtime.Frame) bool {
 func errorPointer(err error) uintptr {
 	v := reflect.ValueOf(err)
 	switch v.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		return v.Pointer()
 	default:
 		return 0
