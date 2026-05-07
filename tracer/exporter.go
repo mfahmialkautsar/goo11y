@@ -1,155 +1,356 @@
 package tracer
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
 
+	"github.com/mfahmialkautsar/goo11y/constant"
 	"github.com/mfahmialkautsar/goo11y/internal/otlputil"
-	"github.com/mfahmialkautsar/goo11y/internal/persistentgrpc"
-	"github.com/mfahmialkautsar/goo11y/internal/persistenthttp"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	coltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
-func setupHTTPExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdktrace.SpanExporter, *persistenthttp.Client, error) {
-	opts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(endpoint.Host),
-		otlptracehttp.WithURLPath(endpoint.PathWithSuffix("/v1/traces")),
-		otlptracehttp.WithTimeout(cfg.ExportTimeout),
-	}
+var errTracePayloadCorrupt = errors.New("tracer: corrupt payload")
 
-	if endpoint.Insecure {
-		opts = append(opts, otlptracehttp.WithInsecure())
-	}
-
-	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
-		opts = append(opts, otlptracehttp.WithHeaders(headers))
-	}
-
-	var spoolClient *persistenthttp.Client
-	if cfg.UseSpool {
-		client, err := persistenthttp.NewClientWithComponent(cfg.QueueDir, cfg.ExportTimeout, "tracer")
-		if err != nil {
-			return nil, nil, fmt.Errorf("create trace client: %w", err)
-		}
-		spoolClient = client
-		opts = append(opts, otlptracehttp.WithHTTPClient(client.Client))
-	}
-	opts = append(opts, otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true}))
-
-	exporter, err := otlptracehttp.New(ctx, opts...)
-	if err != nil {
-		if spoolClient != nil {
-			_ = spoolClient.Close()
-		}
-		return nil, nil, err
-	}
-	return exporter, spoolClient, nil
+type traceBackendSender interface {
+	Send(context.Context, *encodedTraceBatch) error
+	Shutdown(context.Context) error
+	Transport() string
 }
 
-func setupGRPCExporter(ctx context.Context, cfg Config, endpoint otlputil.Endpoint) (sdktrace.SpanExporter, error) {
+type fanoutSpanExporter struct {
+	exporters []sdktrace.SpanExporter
+}
+
+func newConfiguredExporter(ctx context.Context, cfg Config) (sdktrace.SpanExporter, error) {
+	exporters := make([]sdktrace.SpanExporter, 0, 2)
+
+	if cfg.Export.File.Enabled {
+		fileExporter, err := newTraceFileExporter(cfg.Export.File)
+		if err != nil {
+			return nil, err
+		}
+		exporters = append(exporters, fileExporter)
+	}
+
+	if cfg.Export.Backend.Enabled {
+		backendExporter, err := newBackendSpanExporter(ctx, cfg.Export.Backend)
+		if err != nil {
+			for _, exporter := range exporters {
+				_ = exporter.Shutdown(context.Background())
+			}
+			return nil, err
+		}
+		exporters = append(exporters, backendExporter)
+	}
+
+	return combineSpanExporters(exporters)
+}
+
+func combineSpanExporters(exporters []sdktrace.SpanExporter) (sdktrace.SpanExporter, error) {
+	filtered := make([]sdktrace.SpanExporter, 0, len(exporters))
+	for _, exporter := range exporters {
+		if exporter != nil {
+			filtered = append(filtered, exporter)
+		}
+	}
+
+	switch len(filtered) {
+	case 0:
+		return nil, fmt.Errorf("tracer: no exporters configured")
+	case 1:
+		return filtered[0], nil
+	default:
+		return &fanoutSpanExporter{exporters: filtered}, nil
+	}
+}
+
+func (f *fanoutSpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	var err error
+	for _, exporter := range f.exporters {
+		if exportErr := exporter.ExportSpans(ctx, spans); exportErr != nil {
+			err = errors.Join(err, exportErr)
+		}
+	}
+	return err
+}
+
+func (f *fanoutSpanExporter) Shutdown(ctx context.Context) error {
+	var err error
+	for idx := len(f.exporters) - 1; idx >= 0; idx-- {
+		if shutdownErr := f.exporters[idx].Shutdown(ctx); shutdownErr != nil {
+			err = errors.Join(err, shutdownErr)
+		}
+	}
+	return err
+}
+
+type backendSpanExporter struct {
+	sender  traceBackendSender
+	journal *traceFailoverJournal
+	replay  *traceReplayManager
+}
+
+func newBackendSpanExporter(ctx context.Context, cfg BackendConfig) (sdktrace.SpanExporter, error) {
+	sender, err := newTraceBackendSender(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	exporter := &backendSpanExporter{sender: sender}
+	if !cfg.Failover.Enabled {
+		return exporter, nil
+	}
+
+	journal, err := newTraceFailoverJournal(cfg.Failover)
+	if err != nil {
+		_ = sender.Shutdown(context.Background())
+		return nil, err
+	}
+	if err := journal.RecoverPending(); err != nil {
+		_ = sender.Shutdown(context.Background())
+		return nil, err
+	}
+	exporter.journal = journal
+
+	if cfg.Failover.Owner == FailoverOwnerApp {
+		exporter.replay = newTraceReplayManager(journal, sender)
+	}
+
+	return exporter, nil
+}
+
+func (e *backendSpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	batch, err := encodeTraceBatch(spans)
+	if err != nil {
+		otlputil.LogExportFailure("tracer", "file", err)
+		return err
+	}
+	if batch == nil {
+		return nil
+	}
+
+	if e.journal == nil {
+		if err := e.sender.Send(ctx, batch); err != nil {
+			otlputil.LogExportFailure("tracer", e.sender.Transport(), err)
+			return err
+		}
+		return nil
+	}
+
+	pendingName, err := e.journal.StorePending(batch.JSON())
+	if err != nil {
+		otlputil.LogExportFailure("tracer", "file", err)
+		return err
+	}
+
+	if err := e.sender.Send(ctx, batch); err != nil {
+		otlputil.LogExportFailure("tracer", e.sender.Transport(), err)
+		if _, promoteErr := e.journal.PromotePending(pendingName); promoteErr != nil {
+			otlputil.LogExportFailure("tracer", "file", promoteErr)
+			return errors.Join(err, promoteErr)
+		}
+		if e.replay != nil {
+			e.replay.Notify()
+		}
+		return err
+	}
+
+	if err := e.journal.Delete(pendingName); err != nil {
+		otlputil.LogExportFailure("tracer", "file", err)
+	}
+
+	return nil
+}
+
+func (e *backendSpanExporter) Shutdown(ctx context.Context) error {
+	var err error
+	if e.replay != nil {
+		if replayErr := e.replay.Shutdown(ctx); replayErr != nil {
+			err = errors.Join(err, replayErr)
+		}
+	}
+	if e.sender != nil {
+		if shutdownErr := e.sender.Shutdown(ctx); shutdownErr != nil {
+			err = errors.Join(err, shutdownErr)
+		}
+	}
+	return err
+}
+
+type httpTraceBackend struct {
+	client    *http.Client
+	url       string
+	headers   map[string]string
+	timeout   time.Duration
+	transport string
+}
+
+func newHTTPTraceBackend(cfg BackendConfig, endpoint otlputil.Endpoint) traceBackendSender {
+	scheme := "https"
+	if endpoint.Insecure {
+		scheme = "http"
+	}
+
+	return &httpTraceBackend{
+		client: &http.Client{Timeout: cfg.Timeout},
+		url:    scheme + "://" + endpoint.Host + endpoint.PathWithSuffix("/v1/traces"),
+		headers: func() map[string]string {
+			headers := cfg.Credentials.HeaderMap()
+			if headers == nil {
+				return map[string]string{}
+			}
+			return headers
+		}(),
+		timeout:   cfg.Timeout,
+		transport: constant.ProtocolHTTP,
+	}
+}
+
+func (h *httpTraceBackend) Send(ctx context.Context, batch *encodedTraceBatch) error {
+	if batch == nil {
+		return nil
+	}
+
+	reqCtx, cancel := withTimeoutIfNeeded(ctx, h.timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, h.url, bytes.NewReader(batch.JSON()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	for key, value := range h.headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("remote status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (h *httpTraceBackend) Shutdown(context.Context) error {
+	return nil
+}
+
+func (h *httpTraceBackend) Transport() string {
+	return h.transport
+}
+
+type grpcTraceBackend struct {
+	conn      *grpc.ClientConn
+	client    coltrace.TraceServiceClient
+	headers   metadata.MD
+	timeout   time.Duration
+	transport string
+}
+
+func newGRPCTraceBackend(ctx context.Context, cfg BackendConfig, endpoint otlputil.Endpoint) (traceBackendSender, error) {
 	if endpoint.HasPath() {
 		return nil, fmt.Errorf("tracer: grpc endpoint %q must not include a path", cfg.Endpoint)
 	}
 
-	opts := []otlptracegrpc.Option{
-		otlptracegrpc.WithEndpoint(endpoint.HostWithPath()),
-		otlptracegrpc.WithTimeout(cfg.ExportTimeout),
-	}
-
+	opts := []grpc.DialOption{}
 	if endpoint.Insecure {
-		opts = append(opts, otlptracegrpc.WithInsecure())
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
-		opts = append(opts, otlptracegrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, "")))
 	}
 
-	if headers := cfg.Credentials.HeaderMap(); len(headers) > 0 {
-		opts = append(opts, otlptracegrpc.WithHeaders(headers))
-	}
-
-	var spoolManager *persistentgrpc.Manager
-	if cfg.UseSpool {
-		manager, err := persistentgrpc.NewManager(
-			cfg.QueueDir,
-			"tracer",
-			cfg.Protocol,
-			"/opentelemetry.proto.collector.trace.v1.TraceService/Export",
-			func() proto.Message { return new(coltrace.ExportTraceServiceRequest) },
-			func() proto.Message { return new(coltrace.ExportTraceServiceResponse) },
-		)
-		if err != nil {
-			return nil, err
-		}
-		spoolManager = manager
-		opts = append(opts, otlptracegrpc.WithDialOption(grpc.WithUnaryInterceptor(manager.Interceptor())))
-	}
-
-	opts = append(opts, otlptracegrpc.WithRetry(otlptracegrpc.RetryConfig{Enabled: true}))
-
-	exporter, err := otlptracegrpc.New(ctx, opts...)
+	conn, err := grpc.NewClient(endpoint.HostWithPath(), opts...)
 	if err != nil {
-		if spoolManager != nil {
-			_ = spoolManager.Stop(context.Background())
-		}
 		return nil, err
 	}
-	return wrapSpanExporter(exporter, "tracer", cfg.Protocol, spoolManager, nil), nil
-}
 
-type spanExporterWithLogging struct {
-	exporter   sdktrace.SpanExporter
-	component  string
-	protocol   string
-	spool      *persistentgrpc.Manager
-	httpClient *persistenthttp.Client
-}
-
-func wrapSpanExporter(exporter sdktrace.SpanExporter, component, protocol string, spool *persistentgrpc.Manager, httpClient *persistenthttp.Client) sdktrace.SpanExporter {
-	if exporter == nil {
-		if spool != nil {
-			_ = spool.Stop(context.Background())
-		}
-		if httpClient != nil {
-			_ = httpClient.Close()
-		}
-		return exporter
+	headers := metadata.MD{}
+	for key, value := range cfg.Credentials.HeaderMap() {
+		headers.Append(strings.ToLower(key), value)
 	}
-	return &spanExporterWithLogging{
-		exporter:   exporter,
-		component:  component,
-		protocol:   protocol,
-		spool:      spool,
-		httpClient: httpClient,
-	}
+
+	return &grpcTraceBackend{
+		conn:      conn,
+		client:    coltrace.NewTraceServiceClient(conn),
+		headers:   headers,
+		timeout:   cfg.Timeout,
+		transport: constant.ProtocolGRPC,
+	}, nil
 }
 
-func (s *spanExporterWithLogging) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
-	if err := s.exporter.ExportSpans(ctx, spans); err != nil {
-		otlputil.LogExportFailure(s.component, s.protocol, err)
+func (g *grpcTraceBackend) Send(ctx context.Context, batch *encodedTraceBatch) error {
+	if batch == nil {
+		return nil
+	}
+
+	req, err := batch.Request()
+	if err != nil {
 		return err
 	}
-	return nil
+
+	callCtx, cancel := withTimeoutIfNeeded(ctx, g.timeout)
+	defer cancel()
+	if len(g.headers) > 0 {
+		callCtx = metadata.NewOutgoingContext(callCtx, g.headers.Copy())
+	}
+
+	_, err = g.client.Export(callCtx, req)
+	return err
 }
 
-func (s *spanExporterWithLogging) Shutdown(ctx context.Context) error {
-	err := s.exporter.Shutdown(ctx)
+func (g *grpcTraceBackend) Shutdown(context.Context) error {
+	if g.conn == nil {
+		return nil
+	}
+	return g.conn.Close()
+}
+
+func (g *grpcTraceBackend) Transport() string {
+	return g.transport
+}
+
+func newTraceBackendSender(ctx context.Context, cfg BackendConfig) (traceBackendSender, error) {
+	endpoint, err := otlputil.ParseEndpoint(cfg.Endpoint, cfg.Insecure)
 	if err != nil {
-		otlputil.LogExportFailure(s.component, s.protocol, err)
+		return nil, fmt.Errorf("tracer: %w", err)
 	}
-	if s.spool != nil {
-		if stopErr := s.spool.Stop(ctx); stopErr != nil && err == nil {
-			err = stopErr
-		}
+
+	switch cfg.Protocol {
+	case constant.ProtocolHTTP:
+		return newHTTPTraceBackend(cfg, endpoint), nil
+	case constant.ProtocolGRPC:
+		return newGRPCTraceBackend(ctx, cfg, endpoint)
+	default:
+		return nil, fmt.Errorf("tracer: unsupported backend protocol %s", cfg.Protocol)
 	}
-	if s.httpClient != nil {
-		if closeErr := s.httpClient.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
+}
+
+func withTimeoutIfNeeded(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
 	}
-	return err
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= timeout {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }
